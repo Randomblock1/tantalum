@@ -1,0 +1,48 @@
+name: CI
+
+on:
+    push:
+        branches: [master, main]
+    pull_request:
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: "3.12"
+
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: "22"
+                  cache: npm
+
+            - name: Install system tools
+              run: sudo apt-get update && sudo apt-get install -y glslang-tools
+
+            - run: npm ci
+
+            - name: Regenerate shaders and check for drift
+              run: |
+                  python3 compile-shaders.py
+                  git diff --exit-code src/tantalum-shaders.js
+
+            - name: Validate GLSL (glslang)
+              run: python3 tools/validate_shaders.py
+
+            - run: npm run lint
+
+            - run: npm run format:check
+
+            - run: npm run build
+
+            - name: Install Playwright browser
+              run: npx playwright install chromium --with-deps
+
+            - name: End-to-end smoke
+              run: npm run test:e2e
+              env:
+                  CI: true

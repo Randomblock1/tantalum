@@ -1,42 +1,55 @@
 #!/usr/bin/env python3
+"""Pack GLSL sources under shaders/ into src/tantalum-shaders.js for the browser."""
 
-import os
+from pathlib import Path
 
-ShaderDir = "shaders"
-MaxLen = 80;
+SHADER_DIR = Path("shaders")
+OUT_PATH = Path("src/tantalum-shaders.js")
+MAX_LEN = 80
 
-entries = []
-for file in os.listdir(ShaderDir):
-    if file.find(".txt") == -1:
-        continue;
-    
-    lines = open(os.path.join(ShaderDir, file)).read().strip().split('\n')
-    
-    splitLines = []
-    for line in lines:
-        if not line.strip():
-            splitLines[-1] = splitLines[-1][:-1] + "\\n'"
-            splitLines.append('')
-        else:
-            justLen = min(len(line), MaxLen)
-            parts = [line[i:i + MaxLen] for i in range(0, len(line), MaxLen)]
-            for i in parts[:-1]:
-                splitLines.append(("'" + i + "'").rjust(justLen))
-            splitLines.append(("'" + parts[-1] + "\\n'").rjust(justLen))
-    
-    lineLen = len(max(splitLines, key=len))
-    
-    source = ""
-    for i, line in enumerate(splitLines):
-        if line:
-            source += "        "
-            if i < len(splitLines) - 1:
-                source += line.ljust(lineLen) + " +"
+
+def main() -> None:
+    entries = []
+    for path in sorted(SHADER_DIR.glob("*.txt")):
+        text = path.read_text(encoding="utf-8").strip()
+        lines = text.split("\n") if text else []
+
+        split_lines: list[str] = []
+        for line in lines:
+            if not line.strip():
+                if split_lines:
+                    split_lines[-1] = split_lines[-1][:-1] + "\\n'"
+                    split_lines.append("")
+                else:
+                    split_lines.append("''")
             else:
-                source += line
-        if i < len(splitLines) - 1:
-            source += '\n'
-    
-    entries.append("    '{}':\n{}".format(file.replace('.txt', ''), source))
+                just_len = min(len(line), MAX_LEN)
+                parts = [line[i : i + MAX_LEN] for i in range(0, len(line), MAX_LEN)]
+                for part in parts[:-1]:
+                    split_lines.append(("'" + part + "'").rjust(just_len))
+                split_lines.append(("'" + parts[-1] + "\\n'").rjust(just_len))
 
-open("src/tantalum-shaders.js", 'w').write("var Shaders = {\n" + ",\n\n".join(entries) + "\n}")
+        if not split_lines:
+            continue
+
+        line_len = len(max(split_lines, key=len))
+        source = ""
+        for i, sline in enumerate(split_lines):
+            if sline:
+                source += "        "
+                if i < len(split_lines) - 1:
+                    source += sline.ljust(line_len) + " +"
+                else:
+                    source += sline
+            if i < len(split_lines) - 1:
+                source += "\n"
+
+        key = path.stem
+        entries.append(f"    '{key}':\n{source}")
+
+    body = "window.Shaders = {\n" + ",\n\n".join(entries) + "\n};\n"
+    OUT_PATH.write_text(body, encoding="utf-8")
+
+
+if __name__ == "__main__":
+    main()
