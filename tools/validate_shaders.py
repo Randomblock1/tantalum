@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SHADER_DIR = ROOT / "shaders"
+SHADER_DIR = ROOT / "shaders" / "glsl"
 
 INCLUDE_RE = re.compile(r'^#include\s+"([^"]+)"\s*$')
 
