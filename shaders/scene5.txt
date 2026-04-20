@@ -9,7 +9,7 @@ void intersect(Ray ray, inout Intersection isect) {
     planoConcaveLensIntersect(ray, vec2(0.8, 0.0), 0.6, 0.3, 0.6, 1.0, isect);
 }
 
-vec2 sample(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, inout vec3 throughput) {
+vec2 sampleBsdf(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, inout vec3 throughput) {
     if (isect.mat == 1.0) {
         return sampleMirror(wiLocal);
     } else {

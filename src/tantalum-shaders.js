@@ -1,24 +1,28 @@
 window.Shaders = {
     'blend-test-frag':
-        '#include "preamble"\n\n'                                +
+        '#include "preamble"\n\n'                            +
 
-        'void main() {\n'                                        +
-        '    gl_FragColor = vec4(vec3(7.0, 59.0, -7.0), 1.0);\n' +
+        'out vec4 outColor;\n\n'                             +
+
+        'void main() {\n'                                    +
+        '    outColor = vec4(vec3(7.0, 59.0, -7.0), 1.0);\n' +
         '}\n',
 
     'blend-test-pack-frag':
-        '#include "preamble"\n\n'                                     +
+        '#include "preamble"\n\n'                               +
 
-        'uniform sampler2D Tex;\n\n'                                  +
+        'uniform sampler2D Tex;\n\n'                            +
 
-        'void main() {\n'                                             +
-        '    gl_FragColor = texture2D(Tex, vec2(0.5))*(1.0/255.0);\n' +
+        'out vec4 outColor;\n\n'                                +
+
+        'void main() {\n'                                       +
+        '    outColor = texture(Tex, vec2(0.5))*(1.0/255.0);\n' +
         '}\n',
 
     'blend-test-vert':
         '#include "preamble"\n\n'                  +
 
-        'attribute vec3 Position;\n\n'             +
+        'in vec3 Position;\n\n'                    +
 
         'void main(void) {\n'                      +
         '    gl_Position = vec4(Position, 1.0);\n' +
@@ -30,13 +34,13 @@ window.Shaders = {
         '    return 1.0 + dot((b*lSq)/(lSq - c), vec3(1.0));\n'                            +
         '}\n\n'                                                                            +
 
-        'float tanh(float x) {\n'                                                          +
+        'float tanhApprox(float x) {\n'                                                    +
         '    if (abs(x) > 10.0) /* Prevent nasty overflow problems */\n'                   +
         '        return sign(x);\n'                                                        +
         '    float e = exp(-2.0*x);\n'                                                     +
         '    return (1.0 - e)/(1.0 + e);\n'                                                +
         '}\n'                                                                              +
-        'float atanh(float x) {\n'                                                         +
+        'float atanhApprox(float x) {\n'                                                   +
         '    return 0.5*log((1.0 + x)/(1.0 - x));\n'                                       +
         '}\n\n'                                                                            +
 
@@ -76,10 +80,10 @@ window.Shaders = {
         '    float sigmaSq = sigma*sigma;\n'                                               +
         '    float invSigmaSq = 1.0/sigmaSq;\n\n'                                          +
 
-        '    float cdf0 = tanh(theta0*0.5*invSigmaSq);\n'                                  +
-        '    float cdf1 = tanh(theta1*0.5*invSigmaSq);\n\n'                                +
+        '    float cdf0 = tanhApprox(theta0*0.5*invSigmaSq);\n'                            +
+        '    float cdf1 = tanhApprox(theta1*0.5*invSigmaSq);\n\n'                          +
 
-        '    return 2.0*sigmaSq*atanh(cdf0 + (cdf1 - cdf0)*xi);\n'                         +
+        '    return 2.0*sigmaSq*atanhApprox(cdf0 + (cdf1 - cdf0)*xi);\n'                   +
         '}\n'                                                                              +
         'vec2 sampleRoughMirror(inout vec4 state, vec2 wi, inout vec3 throughput, float s' +
                                                                              'igma) {\n'   +
@@ -123,20 +127,22 @@ window.Shaders = {
         'uniform sampler2D Frame;\n'                                                       +
         'uniform float Exposure;\n\n'                                                      +
 
-        'varying vec2 vTexCoord;\n\n'                                                      +
+        'in vec2 vTexCoord;\n\n'                                                           +
+
+        'out vec4 outColor;\n\n'                                                           +
 
         'void main() {\n'                                                                  +
-        '    gl_FragColor = vec4(pow(texture2D(Frame, vTexCoord).rgb*Exposure, vec3(1.0/2' +
-                                                                         '.2)), 1.0);\n'   +
+        '    outColor = vec4(pow(texture(Frame, vTexCoord).rgb*Exposure, vec3(1.0/2.2)), ' +
+                                                                               '1.0);\n'   +
         '}\n',
 
     'compose-vert':
         '#include "preamble"\n\n'                  +
 
-        'attribute vec3 Position;\n'               +
-        'attribute vec2 TexCoord;\n\n'             +
+        'in vec3 Position;\n'                      +
+        'in vec2 TexCoord;\n\n'                    +
 
-        'varying vec2 vTexCoord;\n\n'              +
+        'out vec2 vTexCoord;\n\n'                  +
 
         'void main(void) {\n'                      +
         '    gl_Position = vec4(Position, 1.0);\n' +
@@ -277,7 +283,6 @@ window.Shaders = {
         '}\n',
 
     'init-frag':
-        '#extension GL_EXT_draw_buffers : require\n'                                       +
         '#include "preamble"\n\n'                                                          +
 
         '#include "rand"\n\n'                                                              +
@@ -293,10 +298,14 @@ window.Shaders = {
         'uniform float SpatialSpread;\n'                                                   +
         'uniform vec2 AngularSpread;\n\n'                                                  +
 
-        'varying vec2 vTexCoord;\n\n'                                                      +
+        'in vec2 vTexCoord;\n\n'                                                           +
+
+        'layout(location = 0) out vec4 oPosDir;\n'                                         +
+        'layout(location = 1) out vec4 oRng;\n'                                            +
+        'layout(location = 2) out vec4 oRgbLambda;\n\n'                                    +
 
         'void main() {\n'                                                                  +
-        '    vec4 state = texture2D(RngData, vTexCoord);\n\n'                              +
+        '    vec4 state = texture(RngData, vTexCoord);\n\n'                                +
 
         '    float theta = AngularSpread.x + (rand(state) - 0.5)*AngularSpread.y;\n'       +
         '    vec2 dir = vec2(cos(theta), sin(theta));\n'                                   +
@@ -304,26 +313,26 @@ window.Shaders = {
                                                                     ', EmitterDir.x);\n\n' +
 
         '    float randL = rand(state);\n'                                                 +
-        '    float spectrumOffset = texture2D(ICDF, vec2(randL, 0.5)).r + rand(state)*(1.' +
-                                                                           '0/256.0);\n'   +
+        '    float spectrumOffset = texture(ICDF, vec2(randL, 0.5)).r + rand(state)*(1.0/' +
+                                                                             '256.0);\n'   +
         '    float lambda = 360.0 + (750.0 - 360.0)*spectrumOffset;\n'                     +
         '    vec3 rgb = EmitterPower\n'                                                    +
-        '                    *texture2D(Emission, vec2(spectrumOffset, 0.5)).r\n'          +
-        '                    *texture2D(Spectrum, vec2(spectrumOffset, 0.5)).rgb\n'        +
-        '                    /texture2D(PDF,      vec2(spectrumOffset, 0.5)).r;\n\n'       +
+        '                    *texture(Emission, vec2(spectrumOffset, 0.5)).r\n'            +
+        '                    *texture(Spectrum, vec2(spectrumOffset, 0.5)).rgb\n'          +
+        '                    /texture(PDF,      vec2(spectrumOffset, 0.5)).r;\n\n'         +
 
-        '    gl_FragData[0] = vec4(pos, dir);\n'                                           +
-        '    gl_FragData[1] = state;\n'                                                    +
-        '    gl_FragData[2] = vec4(rgb, lambda);\n'                                        +
+        '    oPosDir = vec4(pos, dir);\n'                                                  +
+        '    oRng = state;\n'                                                              +
+        '    oRgbLambda = vec4(rgb, lambda);\n'                                            +
         '}\n',
 
     'init-vert':
         '#include "preamble"\n\n'                  +
 
-        'attribute vec3 Position;\n'               +
-        'attribute vec2 TexCoord;\n\n'             +
+        'in vec3 Position;\n'                      +
+        'in vec2 TexCoord;\n\n'                    +
 
-        'varying vec2 vTexCoord;\n\n'              +
+        'out vec2 vTexCoord;\n\n'                  +
 
         'void main() {\n'                          +
         '    gl_Position = vec4(Position, 1.0);\n' +
@@ -396,17 +405,20 @@ window.Shaders = {
         '}\n',
 
     'pass-frag':
-        '#include "preamble"\n\n'                                          +
+        '#include "preamble"\n\n'                                    +
 
-        'uniform sampler2D Frame;\n\n'                                     +
+        'uniform sampler2D Frame;\n\n'                               +
 
-        'varying vec2 vTexCoord;\n\n'                                      +
+        'in vec2 vTexCoord;\n\n'                                     +
 
-        'void main() {\n'                                                  +
-        '    gl_FragColor = vec4(texture2D(Frame, vTexCoord).rgb, 1.0);\n' +
+        'out vec4 outColor;\n\n'                                     +
+
+        'void main() {\n'                                            +
+        '    outColor = vec4(texture(Frame, vTexCoord).rgb, 1.0);\n' +
         '}\n',
 
     'preamble':
+        '#version 300 es\n'                +
         '#define PI      3.1415926536\n'   +
         '#define PI_HALF 1.5707963268\n\n' +
 
@@ -427,12 +439,14 @@ window.Shaders = {
         '}\n',
 
     'ray-frag':
-        '#include "preamble"\n\n'                 +
+        '#include "preamble"\n\n'             +
 
-        'varying vec3 vColor;\n\n'                +
+        'in vec3 vColor;\n\n'                 +
 
-        'void main() {\n'                         +
-        '    gl_FragColor = vec4(vColor, 1.0);\n' +
+        'out vec4 outColor;\n\n'              +
+
+        'void main() {\n'                     +
+        '    outColor = vec4(vColor, 1.0);\n' +
         '}\n',
 
     'ray-vert':
@@ -443,20 +457,20 @@ window.Shaders = {
         'uniform sampler2D RgbData;\n'                                                     +
         'uniform float Aspect;\n\n'                                                        +
 
-        'attribute vec3 TexCoord;\n\n'                                                     +
+        'in vec3 TexCoord;\n\n'                                                            +
 
-        'varying vec3 vColor;\n\n'                                                         +
+        'out vec3 vColor;\n\n'                                                             +
 
         'void main() {\n'                                                                  +
-        '    vec2 posA = texture2D(PosDataA, TexCoord.xy).xy;\n'                           +
-        '    vec2 posB = texture2D(PosDataB, TexCoord.xy).xy;\n'                           +
+        '    vec2 posA = texture(PosDataA, TexCoord.xy).xy;\n'                             +
+        '    vec2 posB = texture(PosDataB, TexCoord.xy).xy;\n'                             +
         '    vec2 pos = mix(posA, posB, TexCoord.z);\n'                                    +
         '    vec2 dir = posB - posA;\n'                                                    +
         '    float biasCorrection = clamp(length(dir)/max(abs(dir.x), abs(dir.y)), 1.0, 1' +
                                                                            '.414214);\n\n' +
 
         '    gl_Position = vec4(pos.x/Aspect, pos.y, 0.0, 1.0);\n'                         +
-        '    vColor = texture2D(RgbData, TexCoord.xy).rgb*biasCorrection;\n'               +
+        '    vColor = texture(RgbData, TexCoord.xy).rgb*biasCorrection;\n'                 +
         '}\n',
 
     'scene1':
@@ -478,8 +492,8 @@ window.Shaders = {
                                                                           '0, isect);\n'   +
         '}\n\n'                                                                            +
 
-        'vec2 sample(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, in' +
-                                                              'out vec3 throughput) {\n'   +
+        'vec2 sampleBsdf(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal' +
+                                                          ', inout vec3 throughput) {\n'   +
         '    if (isect.mat == 1.0) {\n'                                                    +
         '        float ior = sellmeierIor(vec3(1.6215, 0.2563, 1.6445), vec3(0.0122, 0.05' +
                                                          '96, 147.4688), lambda)/1.4;\n'   +
@@ -505,8 +519,8 @@ window.Shaders = {
         '    sphereIntersect(ray, vec2( 1.424, -0.8), 0.356, 5.0, isect);\n'               +
         '}\n\n'                                                                            +
 
-        'vec2 sample(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, in' +
-                                                              'out vec3 throughput) {\n'   +
+        'vec2 sampleBsdf(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal' +
+                                                          ', inout vec3 throughput) {\n'   +
         '           if (isect.mat == 1.0) { return sampleRoughMirror(state, wiLocal, thro' +
                                                                       'ughput, 0.02);\n'   +
         '    } else if (isect.mat == 2.0) { return sampleRoughMirror(state, wiLocal, thro' +
@@ -536,8 +550,8 @@ window.Shaders = {
         '    sphereIntersect(ray, vec2( 0.7, -0.45), 0.35, 2.0, isect);\n'                 +
         '}\n\n'                                                                            +
 
-        'vec2 sample(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, in' +
-                                                              'out vec3 throughput) {\n'   +
+        'vec2 sampleBsdf(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal' +
+                                                          ', inout vec3 throughput) {\n'   +
         '    if (isect.mat == 2.0) {\n'                                                    +
         '        float ior = sellmeierIor(vec3(1.6215, 0.2563, 1.6445), vec3(0.0122, 0.05' +
                                                          '96, 147.4688), lambda)/1.4;\n'   +
@@ -566,8 +580,8 @@ window.Shaders = {
         '    prismIntersect(ray, vec2(0.0, 0.0), 0.6, 1.0, isect);\n'                      +
         '}\n\n'                                                                            +
 
-        'vec2 sample(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, in' +
-                                                              'out vec3 throughput) {\n'   +
+        'vec2 sampleBsdf(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal' +
+                                                          ', inout vec3 throughput) {\n'   +
         '    if (isect.mat == 1.0) {\n'                                                    +
         '        float ior = sellmeierIor(vec3(1.6215, 0.2563, 1.6445), vec3(0.0122, 0.05' +
                                                           '96, 17.4688), lambda)/1.8;\n'   +
@@ -590,8 +604,8 @@ window.Shaders = {
         '    planoConcaveLensIntersect(ray, vec2(0.8, 0.0), 0.6, 0.3, 0.6, 1.0, isect);\n' +
         '}\n\n'                                                                            +
 
-        'vec2 sample(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, in' +
-                                                              'out vec3 throughput) {\n'   +
+        'vec2 sampleBsdf(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal' +
+                                                          ', inout vec3 throughput) {\n'   +
         '    if (isect.mat == 1.0) {\n'                                                    +
         '        return sampleMirror(wiLocal);\n'                                          +
         '    } else {\n'                                                                   +
@@ -617,8 +631,8 @@ window.Shaders = {
                                                                            ', isect);\n'   +
         '}\n\n'                                                                            +
 
-        'vec2 sample(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, in' +
-                                                              'out vec3 throughput) {\n'   +
+        'vec2 sampleBsdf(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal' +
+                                                          ', inout vec3 throughput) {\n'   +
         '    if (isect.mat == 1.0) {\n'                                                    +
         '        float ior = sqrt(sellmeierIor(vec3(1.0396, 0.2318, 1.0105), vec3(0.0060,' +
                                                          ' 0.0200, 103.56), lambda));\n'   +
@@ -649,8 +663,8 @@ window.Shaders = {
         '    prismIntersect(ray, vec2(0.8, -0.7), 0.2, 1.0, isect);\n'                     +
         '}\n\n'                                                                            +
 
-        'vec2 sample(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, in' +
-                                                              'out vec3 throughput) {\n'   +
+        'vec2 sampleBsdf(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal' +
+                                                          ', inout vec3 throughput) {\n'   +
         '    if (isect.mat == 1.0) {\n'                                                    +
         '        float ior = sellmeierIor(vec3(1.6215, 0.2563, 1.6445), vec3(0.0122, 0.05' +
                                                  '96, 147.4688), lambda)/1.6; // SF10\n'   +
@@ -664,76 +678,80 @@ window.Shaders = {
         '}\n',
 
     'trace-frag':
-        '#extension GL_EXT_draw_buffers : require\n'                                        +
-        '#include "preamble"\n'                                                             +
-        '#include "rand"\n\n'                                                               +
+        '#include "preamble"\n'                                                            +
+        '#include "rand"\n\n'                                                              +
 
-        'uniform sampler2D PosData;\n'                                                      +
-        'uniform sampler2D RngData;\n'                                                      +
-        'uniform sampler2D RgbData;\n\n'                                                    +
+        'uniform sampler2D PosData;\n'                                                     +
+        'uniform sampler2D RngData;\n'                                                     +
+        'uniform sampler2D RgbData;\n\n'                                                   +
 
-        'varying vec2 vTexCoord;\n\n'                                                       +
+        'in vec2 vTexCoord;\n\n'                                                           +
 
-        'struct Ray {\n'                                                                    +
-        '    vec2 pos;\n'                                                                   +
-        '    vec2 dir;\n'                                                                   +
-        '    vec2 invDir;\n'                                                                +
-        '    vec2 dirSign;\n'                                                               +
-        '};\n'                                                                              +
-        'struct Intersection {\n'                                                           +
-        '    float tMin;\n'                                                                 +
-        '    float tMax;\n'                                                                 +
-        '    vec2 n;\n'                                                                     +
-        '    float mat;\n'                                                                  +
-        '};\n\n'                                                                            +
+        'layout(location = 0) out vec4 oPosDir;\n'                                         +
+        'layout(location = 1) out vec4 oRng;\n'                                            +
+        'layout(location = 2) out vec4 oRgbLambda;\n\n'                                    +
 
-        'void intersect(Ray ray, inout Intersection isect);\n'                              +
-        'vec2 sample(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, in'  +
-                                                               'out vec3 throughput);\n\n'  +
+        'struct Ray {\n'                                                                   +
+        '    vec2 pos;\n'                                                                  +
+        '    vec2 dir;\n'                                                                  +
+        '    vec2 invDir;\n'                                                               +
+        '    vec2 dirSign;\n'                                                              +
+        '};\n'                                                                             +
+        'struct Intersection {\n'                                                          +
+        '    float tMin;\n'                                                                +
+        '    float tMax;\n'                                                                +
+        '    vec2 n;\n'                                                                    +
+        '    float mat;\n'                                                                 +
+        '};\n\n'                                                                           +
 
-        'Ray unpackRay(vec4 posDir) {\n'                                                    +
-        '    vec2 pos = posDir.xy;\n'                                                       +
-        '    vec2 dir = posDir.zw;\n'                                                       +
-        '    dir.x = abs(dir.x) < 1e-5 ? 1e-5 : dir.x; /* The nuclear option to fix NaN i'  +
-                                                          'ssues on some platforms */\n'    +
-        '    dir.y = abs(dir.y) < 1e-5 ? 1e-5 : dir.y;\n'                                   +
-        '    return Ray(pos, normalize(dir), 1.0/dir, sign(dir));\n'                        +
-        '}\n\n'                                                                             +
+        'void intersect(Ray ray, inout Intersection isect);\n'                             +
+        'vec2 sampleBsdf(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal' +
+                                                           ', inout vec3 throughput);\n\n' +
 
-        'void main() {\n'                                                                   +
-        '    vec4 posDir    = texture2D(PosData, vTexCoord);\n'                             +
-        '    vec4 state     = texture2D(RngData, vTexCoord);\n'                             +
-        '    vec4 rgbLambda = texture2D(RgbData, vTexCoord);\n\n'                           +
+        'Ray unpackRay(vec4 posDir) {\n'                                                   +
+        '    vec2 pos = posDir.xy;\n'                                                      +
+        '    vec2 dir = posDir.zw;\n'                                                      +
+        '    dir.x = abs(dir.x) < 1e-5 ? 1e-5 : dir.x; /* The nuclear option to fix NaN i' +
+                                                          'ssues on some platforms */\n'   +
+        '    dir.y = abs(dir.y) < 1e-5 ? 1e-5 : dir.y;\n'                                  +
+        '    return Ray(pos, normalize(dir), 1.0/dir, sign(dir));\n'                       +
+        '}\n\n'                                                                            +
 
-        '    Ray ray = unpackRay(posDir);\n'                                                +
-        '    Intersection isect;\n'                                                         +
-        '    isect.tMin = 1e-4;\n'                                                          +
-        '    isect.tMax = 1e30;\n'                                                          +
-        '    intersect(ray, isect);\n\n'                                                    +
+        'void main() {\n'                                                                  +
+        '    vec4 posDir    = texture(PosData, vTexCoord);\n'                              +
+        '    vec4 state     = texture(RngData, vTexCoord);\n'                              +
+        '    vec4 rgbLambda = texture(RgbData, vTexCoord);\n\n'                            +
 
-        '    vec2 t = vec2(-isect.n.y, isect.n.x);\n'                                       +
-        '    vec2 wiLocal = -vec2(dot(t, ray.dir), dot(isect.n, ray.dir));\n'               +
-        '    vec2 woLocal = sample(state, isect, rgbLambda.w, wiLocal, rgbLambda.rgb);\n\n' +
+        '    Ray ray = unpackRay(posDir);\n'                                               +
+        '    Intersection isect;\n'                                                        +
+        '    isect.tMin = 1e-4;\n'                                                         +
+        '    isect.tMax = 1e30;\n'                                                         +
+        '    intersect(ray, isect);\n\n'                                                   +
 
-        '    if (isect.tMax == 1e30) {\n'                                                   +
-        '        rgbLambda.rgb = vec3(0.0);\n'                                              +
-        '    } else {\n'                                                                    +
-        '        posDir.xy = ray.pos + ray.dir*isect.tMax;\n'                               +
-        '        posDir.zw = woLocal.y*isect.n + woLocal.x*t;\n'                            +
-        '    }\n\n'                                                                         +
+        '    vec2 t = vec2(-isect.n.y, isect.n.x);\n'                                      +
+        '    vec2 wiLocal = -vec2(dot(t, ray.dir), dot(isect.n, ray.dir));\n'              +
+        '    vec2 woLocal = sampleBsdf(state, isect, rgbLambda.w, wiLocal, rgbLambda.rgb)' +
+                                                                                   ';\n\n' +
 
-        '    gl_FragData[0] = posDir;\n'                                                    +
-        '    gl_FragData[1] = state;\n'                                                     +
-        '    gl_FragData[2] = rgbLambda;\n'                                                 +
+        '    if (isect.tMax == 1e30) {\n'                                                  +
+        '        rgbLambda.rgb = vec3(0.0);\n'                                             +
+        '    } else {\n'                                                                   +
+        '        posDir.xy = ray.pos + ray.dir*isect.tMax;\n'                              +
+        '        posDir.zw = woLocal.y*isect.n + woLocal.x*t;\n'                           +
+        '    }\n\n'                                                                        +
+
+        '    oPosDir = posDir;\n'                                                          +
+        '    oRng = state;\n'                                                              +
+        '    oRgbLambda = rgbLambda;\n'                                                    +
         '}\n',
 
     'trace-vert':
         '#include "preamble"\n\n'                  +
 
-        'attribute vec3 Position;\n'               +
-        'attribute vec2 TexCoord;\n\n'             +
+        'in vec3 Position;\n'                      +
+        'in vec2 TexCoord;\n\n'                    +
 
-        'varying vec2 vTexCoord;\n\n'              +
+        'out vec2 vTexCoord;\n\n'                  +
 
         'void main() {\n'                          +
         '    gl_Position = vec4(Position, 1.0);\n' +

@@ -1,4 +1,3 @@
-#extension GL_EXT_draw_buffers : require
 #include "preamble"
 #include "rand"
 
@@ -6,7 +5,11 @@ uniform sampler2D PosData;
 uniform sampler2D RngData;
 uniform sampler2D RgbData;
 
-varying vec2 vTexCoord;
+in vec2 vTexCoord;
+
+layout(location = 0) out vec4 oPosDir;
+layout(location = 1) out vec4 oRng;
+layout(location = 2) out vec4 oRgbLambda;
 
 struct Ray {
     vec2 pos;
@@ -22,7 +25,7 @@ struct Intersection {
 };
 
 void intersect(Ray ray, inout Intersection isect);
-vec2 sample(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, inout vec3 throughput);
+vec2 sampleBsdf(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, inout vec3 throughput);
 
 Ray unpackRay(vec4 posDir) {
     vec2 pos = posDir.xy;
@@ -33,9 +36,9 @@ Ray unpackRay(vec4 posDir) {
 }
 
 void main() {
-    vec4 posDir    = texture2D(PosData, vTexCoord);
-    vec4 state     = texture2D(RngData, vTexCoord);
-    vec4 rgbLambda = texture2D(RgbData, vTexCoord);
+    vec4 posDir    = texture(PosData, vTexCoord);
+    vec4 state     = texture(RngData, vTexCoord);
+    vec4 rgbLambda = texture(RgbData, vTexCoord);
     
     Ray ray = unpackRay(posDir);
     Intersection isect;
@@ -45,7 +48,7 @@ void main() {
     
     vec2 t = vec2(-isect.n.y, isect.n.x);
     vec2 wiLocal = -vec2(dot(t, ray.dir), dot(isect.n, ray.dir));
-    vec2 woLocal = sample(state, isect, rgbLambda.w, wiLocal, rgbLambda.rgb);
+    vec2 woLocal = sampleBsdf(state, isect, rgbLambda.w, wiLocal, rgbLambda.rgb);
     
     if (isect.tMax == 1e30) {
         rgbLambda.rgb = vec3(0.0);
@@ -54,7 +57,7 @@ void main() {
         posDir.zw = woLocal.y*isect.n + woLocal.x*t;
     }
     
-    gl_FragData[0] = posDir;
-    gl_FragData[1] = state;
-    gl_FragData[2] = rgbLambda;
+    oPosDir = posDir;
+    oRng = state;
+    oRgbLambda = rgbLambda;
 }

@@ -15,12 +15,12 @@ SHADER_DIR = ROOT / "shaders"
 
 INCLUDE_RE = re.compile(r'^#include\s+"([^"]+)"\s*$')
 
-# Single-output fragment programs (MRT shaders use GL_EXT_draw_buffers; glslang
-# does not validate those the same way as browsers, so they are skipped here).
 FRAGMENTS = [
     "compose-frag",
     "pass-frag",
     "ray-frag",
+    "init-frag",
+    "trace-frag",
     "blend-test-frag",
     "blend-test-pack-frag",
 ]
@@ -63,7 +63,7 @@ def main() -> int:
         for name in VERTS:
             src = expand(name)
             f = tmp_path / f"{name}.vert"
-            f.write_text("#version 100\n" + src + "\n", encoding="utf-8")
+            f.write_text(src + "\n", encoding="utf-8")
             r = subprocess.run([glslang, "-S", "vert", str(f)], capture_output=True, text=True)
             if r.returncode != 0:
                 print(f"FAIL {name} (vert):\n{r.stdout}\n{r.stderr}", file=sys.stderr)
@@ -71,7 +71,7 @@ def main() -> int:
         for name in FRAGMENTS:
             src = expand(name)
             f = tmp_path / f"{name}.frag"
-            f.write_text("#version 100\n" + src + "\n", encoding="utf-8")
+            f.write_text(src + "\n", encoding="utf-8")
             r = subprocess.run([glslang, "-S", "frag", str(f)], capture_output=True, text=True)
             if r.returncode != 0:
                 print(f"FAIL {name} (frag):\n{r.stdout}\n{r.stderr}", file=sys.stderr)

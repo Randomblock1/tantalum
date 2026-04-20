@@ -8,6 +8,9 @@ var Tantalum = function () {
     this.boundRenderLoop = this.renderLoop.bind(this);
 
     this.savedImages = 0;
+    this._prewarmStarted = false;
+    this._prewarmStartMs = 0;
+    this._prewarmBudgetMs = 250;
 
     try {
         this.setupGL();
@@ -34,26 +37,62 @@ var Tantalum = function () {
     /* Ok, all seems well. Time to show the controls */
     this.controls.style.visibility = "visible";
 
+    this.schedulePrewarm();
     window.requestAnimationFrame(this.boundRenderLoop);
+};
+
+Tantalum.prototype.schedulePrewarm = function () {
+    if (this._prewarmStarted) return;
+    if (!this.renderer) return;
+    this._prewarmStarted = true;
+    this._prewarmStartMs = performance.now();
+
+    var runSlice = function (deadline) {
+        if (!this.renderer || this.renderer.finished()) return;
+        if (performance.now() - this._prewarmStartMs > this._prewarmBudgetMs) return;
+
+        if (typeof this.renderer.prewarm === "function") {
+            this.renderer.prewarm(deadline);
+        } else {
+            // Fallback: do a single render step.
+            this.renderer.render(performance.now(), true);
+        }
+
+        scheduleNext();
+    }.bind(this);
+
+    var scheduleNext = function () {
+        if (!this.renderer || this.renderer.finished()) return;
+        if (performance.now() - this._prewarmStartMs > this._prewarmBudgetMs) return;
+
+        if (window.requestIdleCallback) {
+            window.requestIdleCallback(runSlice, { timeout: 50 });
+        } else {
+            setTimeout(function () {
+                runSlice({ timeRemaining: function () { return 0; } });
+            }, 0);
+        }
+    }.bind(this);
+
+    scheduleNext();
 };
 
 Tantalum.prototype.setupGL = function () {
     try {
-        var gl = this.canvas.getContext("webgl") || this.canvas.getContext("experimental-webgl");
+        var gl = this.canvas.getContext("webgl2");
     } catch (e) {}
-    if (!gl) throw new Error("Could not initialise WebGL");
+    if (!gl) throw new Error("Could not initialise WebGL 2");
 
-    var floatExt = gl.getExtension("OES_texture_float");
     var floatLinExt = gl.getExtension("OES_texture_float_linear");
-    var floatBufExt = gl.getExtension("WEBGL_color_buffer_float");
-    var multiBufExt = gl.getExtension("WEBGL_draw_buffers");
+    var colorBufFloatExt = gl.getExtension("EXT_color_buffer_float");
+    var floatBlendExt = gl.getExtension("EXT_float_blend");
 
-    if (!floatExt || !floatLinExt) throw new Error("Your platform does not support float textures");
-    if (!multiBufExt) throw new Error("Your platform does not support the draw buffers extension");
+    if (!floatLinExt) throw new Error("Your platform does not support linear filtering for float textures");
+    if (!colorBufFloatExt) throw new Error("Your platform does not support float render targets");
 
-    window.tgl.init(gl, multiBufExt);
+    window.tgl.init(gl);
 
-    if (!floatBufExt) this.colorBufferFloatTest(gl);
+    if (!floatBlendExt) this.colorBufferFloatTest(gl);
 
     this.gl = gl;
 };

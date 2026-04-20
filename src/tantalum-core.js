@@ -397,7 +397,21 @@
         this.quadVbo.draw(this.compositeProgram, this.gl.TRIANGLE_FAN);
     };
 
-    Renderer.prototype.render = function (timestamp) {
+    Renderer.prototype.prewarm = function (deadline) {
+        /* Keep prewarm bounded and cooperative with the browser */
+        var maxSteps = 8;
+        var steps = 0;
+        var hasBudget = function () {
+            return deadline && typeof deadline.timeRemaining === "function" ? deadline.timeRemaining() > 2 : steps == 0;
+        };
+        while (steps < maxSteps && hasBudget() && !this.finished()) {
+            this.render(performance.now(), true);
+            steps++;
+        }
+    };
+
+    Renderer.prototype.render = function (timestamp, isPrewarm) {
+        if (timestamp === undefined || timestamp === null) timestamp = performance.now();
         this.needsReset = true;
         this.elapsedTimes.push(timestamp);
 
@@ -498,8 +512,15 @@
                        a bit tricky because there's a lot of variability in how often
                        the browser executes this loop and 16ms might well not be
                        reachable, but 24ms seems to do ok */
-                    if (avgTime > 24.0) this.activeBlock = Math.max(4, this.activeBlock - 4);
-                    else this.activeBlock = Math.min(512, this.activeBlock + 4);
+                    var blockMax = this.raySize; /* Cannot exceed ray buffer height */
+                    var delta = 0;
+                    if (avgTime > 40.0) delta = -32;
+                    else if (avgTime > 24.0) delta = -8;
+                    else if (avgTime < 12.0) delta = +32;
+                    else if (avgTime < 16.0) delta = +16;
+                    else delta = +4;
+
+                    this.activeBlock = Math.max(4, Math.min(blockMax, this.activeBlock + delta));
 
                     this.elapsedTimes = [this.elapsedTimes[this.elapsedTimes.length - 1]];
                 }

@@ -1,5 +1,5 @@
 var tgl = {
-    init: function (gl, multiBufExt) {
+    init: function (gl) {
         function glTypeSize(type) {
             switch (type) {
                 case gl.BYTE:
@@ -20,14 +20,27 @@ var tgl = {
         tgl.Texture = function (width, height, channels, isFloat, isLinear, isClamped, texels) {
             var coordMode = isClamped ? gl.CLAMP_TO_EDGE : gl.REPEAT;
             this.type = isFloat ? gl.FLOAT : gl.UNSIGNED_BYTE;
-            this.format = [gl.LUMINANCE, gl.RG, gl.RGB, gl.RGBA][channels - 1];
+            this.format = [gl.RED, gl.RG, gl.RGB, gl.RGBA][channels - 1];
+            this.internalFormat = isFloat
+                ? [gl.R32F, gl.RG32F, gl.RGB32F, gl.RGBA32F][channels - 1]
+                : [gl.R8, gl.RG8, gl.RGB8, gl.RGBA8][channels - 1];
 
             this.width = width;
             this.height = height;
 
             this.glName = gl.createTexture();
             gl.bindTexture(gl.TEXTURE_2D, this.glName);
-            gl.texImage2D(gl.TEXTURE_2D, 0, this.format, this.width, this.height, 0, this.format, this.type, texels);
+            gl.texImage2D(
+                gl.TEXTURE_2D,
+                0,
+                this.internalFormat,
+                this.width,
+                this.height,
+                0,
+                this.format,
+                this.type,
+                texels,
+            );
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, coordMode);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, coordMode);
             this.setSmooth(isLinear);
@@ -42,7 +55,17 @@ var tgl = {
         };
 
         tgl.Texture.prototype.copy = function (texels) {
-            gl.texImage2D(gl.TEXTURE_2D, 0, this.format, this.width, this.height, 0, this.format, this.type, texels);
+            gl.texImage2D(
+                gl.TEXTURE_2D,
+                0,
+                this.internalFormat,
+                this.width,
+                this.height,
+                0,
+                this.format,
+                this.type,
+                texels,
+            );
         };
 
         tgl.Texture.prototype.bind = function (unit) {
@@ -74,7 +97,7 @@ var tgl = {
         tgl.RenderTarget.prototype.drawBuffers = function (numBufs) {
             var buffers = [];
             for (var i = 0; i < numBufs; ++i) buffers.push(gl.COLOR_ATTACHMENT0 + i);
-            multiBufExt.drawBuffersWEBGL(buffers);
+            gl.drawBuffers(buffers);
         };
 
         tgl.Shader = function (shaderDict, vert, frag) {

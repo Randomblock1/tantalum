@@ -12,7 +12,7 @@ void intersect(Ray ray, inout Intersection isect) {
     lineIntersect(ray, vec2(1.71686,   0.310275), vec2(0.983139,  0.989725), 2.0, isect);
 }
 
-vec2 sample(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, inout vec3 throughput) {
+vec2 sampleBsdf(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, inout vec3 throughput) {
     if (isect.mat == 1.0) {
         float ior = sqrt(sellmeierIor(vec3(1.0396, 0.2318, 1.0105), vec3(0.0060, 0.0200, 103.56), lambda));
         return sampleDielectric(state, wiLocal, ior);

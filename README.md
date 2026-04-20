@@ -6,7 +6,7 @@ Tantalum Sample Render
 
 Tantalum is a physically based 2D renderer written out of personal interest. The idea of this project was to build a light transport simulation using the same mathematical tools used in academic and movie production renderers, but in a simplified 2D setting. The 2D setting allows for faster render times and a more accessible way of understanding and interacting with light, even for people with no prior knowledge or interest in rendering.
 
-Tantalum is written in JavaScript and WebGL 1.
+Tantalum is written in JavaScript and WebGL 2.
 
 ## Running locally
 
@@ -37,16 +37,13 @@ python3 compile-shaders.py
 
 Always run this after editing shader files, and commit the regenerated `tantalum-shaders.js` (CI enforces that the tree is clean after regeneration).
 
-## WebGL 1 requirements
+## WebGL 2 requirements
 
-The renderer targets **WebGL 1** and relies on these extensions (the app checks for them and shows a clear error if something is missing):
+The renderer targets **WebGL 2** and relies on these extensions (the app checks for them and shows a clear error if something is missing):
 
-- `OES_texture_float`
 - `OES_texture_float_linear`
-- `WEBGL_draw_buffers`
-- `WEBGL_color_buffer_float` when advertised; otherwise a small blending self-test decides whether float render targets work.
-
-Path tracing runs in **GLSL on the GPU**. A **WebGL 2** or **WebGPU** port would be a separate project; **WebAssembly** does not speed up that GPU work unless you have measured a separate CPU bottleneck (for example heavy preprocessing in JavaScript).
+- `EXT_color_buffer_float` (required for float render targets)
+- `EXT_float_blend` (preferred; otherwise a small blending self-test decides whether float render targets work)
 
 ## Production build
 

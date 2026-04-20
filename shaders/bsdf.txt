@@ -3,13 +3,13 @@ float sellmeierIor(vec3 b, vec3 c, float lambda) {
     return 1.0 + dot((b*lSq)/(lSq - c), vec3(1.0));
 }
 
-float tanh(float x) {
+float tanhApprox(float x) {
     if (abs(x) > 10.0) /* Prevent nasty overflow problems */
         return sign(x);
     float e = exp(-2.0*x);
     return (1.0 - e)/(1.0 + e);
 }
-float atanh(float x) {
+float atanhApprox(float x) {
     return 0.5*log((1.0 + x)/(1.0 - x));
 }
 
@@ -49,10 +49,10 @@ float sampleVisibleNormal(float sigma, float xi, float theta0, float theta1) {
     float sigmaSq = sigma*sigma;
     float invSigmaSq = 1.0/sigmaSq;
     
-    float cdf0 = tanh(theta0*0.5*invSigmaSq);
-    float cdf1 = tanh(theta1*0.5*invSigmaSq);
+    float cdf0 = tanhApprox(theta0*0.5*invSigmaSq);
+    float cdf1 = tanhApprox(theta1*0.5*invSigmaSq);
 
-    return 2.0*sigmaSq*atanh(cdf0 + (cdf1 - cdf0)*xi);
+    return 2.0*sigmaSq*atanhApprox(cdf0 + (cdf1 - cdf0)*xi);
 }
 vec2 sampleRoughMirror(inout vec4 state, vec2 wi, inout vec3 throughput, float sigma) {
     float theta = asin(clamp(wi.x, -1.0, 1.0));

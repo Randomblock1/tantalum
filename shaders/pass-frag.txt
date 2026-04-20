@@ -2,8 +2,10 @@
 
 uniform sampler2D Frame;
 
-varying vec2 vTexCoord;
+in vec2 vTexCoord;
+
+out vec4 outColor;
 
 void main() {
-    gl_FragColor = vec4(texture2D(Frame, vTexCoord).rgb, 1.0);
+    outColor = vec4(texture(Frame, vTexCoord).rgb, 1.0);
 }

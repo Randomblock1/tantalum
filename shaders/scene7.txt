@@ -13,7 +13,7 @@ void intersect(Ray ray, inout Intersection isect) {
     prismIntersect(ray, vec2(0.8, -0.7), 0.2, 1.0, isect);
 }
 
-vec2 sample(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, inout vec3 throughput) {
+vec2 sampleBsdf(inout vec4 state, Intersection isect, float lambda, vec2 wiLocal, inout vec3 throughput) {
     if (isect.mat == 1.0) {
         float ior = sellmeierIor(vec3(1.6215, 0.2563, 1.6445), vec3(0.0122, 0.0596, 147.4688), lambda)/1.6; // SF10
         return sampleDielectric(state, wiLocal, ior);
