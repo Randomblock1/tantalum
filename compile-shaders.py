@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-SHADER_DIR = Path("shaders")
+SHADER_DIR = Path("shaders/glsl")
 OUT_PATH = Path("src/tantalum-shaders.js")
 MAX_LEN = 80
 
