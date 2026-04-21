@@ -28,11 +28,14 @@ export default [
     { ignores: ["dist/**", "node_modules/**", "src/tantalum-shaders.js"] },
     js.configs.recommended,
     {
-        files: ["src/main.js"],
+        files: ["src/main.js", "src/backend/**/*.js"],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: "module",
             globals: browserGlobals,
+        },
+        rules: {
+            "no-unused-vars": ["error", { argsIgnorePattern: "^_", varsIgnorePattern: "^_" }],
         },
     },
     {

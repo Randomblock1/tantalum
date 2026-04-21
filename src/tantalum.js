@@ -11,32 +11,26 @@ var Tantalum = function () {
     this._prewarmStarted = false;
     this._prewarmStartMs = 0;
     this._prewarmBudgetMs = 250;
+};
 
+Tantalum.prototype.init = async function () {
     try {
-        this.setupGL();
+        await this.setupGL();
     } catch (e) {
-        /* GL errors at this stage are to be expected to some degree,
-           so display a nice error message and call it quits */
         this.fail(e.message + ". This demo won't run in your browser.");
         return;
     }
     try {
         this.setupUI();
     } catch (e) {
-        /* Errors here are a bit more serious and shouldn't normally happen.
-           Let's just dump what we have and hope the user can make sense of it */
         this.fail(
             "Ooops! Something unexpected happened. The error message is listed below:<br/>" +
-                "<pre>" +
-                e.message +
-                "</pre>",
+                "<pre>" + e.message + "</pre>",
         );
         return;
     }
 
-    /* Ok, all seems well. Time to show the controls */
     this.controls.style.visibility = "visible";
-
     this.schedulePrewarm();
     window.requestAnimationFrame(this.boundRenderLoop);
 };
@@ -77,84 +71,14 @@ Tantalum.prototype.schedulePrewarm = function () {
     scheduleNext();
 };
 
-Tantalum.prototype.setupGL = function () {
-    try {
-        var gl = this.canvas.getContext("webgl2");
-    } catch (e) {}
-    if (!gl) throw new Error("Could not initialise WebGL 2");
-
-    var floatLinExt = gl.getExtension("OES_texture_float_linear");
-    var colorBufFloatExt = gl.getExtension("EXT_color_buffer_float");
-    var floatBlendExt = gl.getExtension("EXT_float_blend");
-
-    if (!floatLinExt) throw new Error("Your platform does not support linear filtering for float textures");
-    if (!colorBufFloatExt) throw new Error("Your platform does not support float render targets");
-
-    window.tgl.init(gl);
-
-    if (!floatBlendExt) this.colorBufferFloatTest(gl);
-
-    this.gl = gl;
-};
-
-Tantalum.prototype.colorBufferFloatTest = function (gl) {
-    /* This one is slightly awkward. The WEBGL_color_buffer_float
-       extension is apparently causing a lot of troubles for
-       ANGLE, so barely anyone bothers to implement it. On the other
-       hand, most platforms do actually implicitly support float render
-       targets just fine, even though they pretend they don't.
-       So to *actually* figure out whether we can do float attachments
-       or not, we have to do a very hacky up-front blending test
-       and see whether the results come out correct.
-       Hurray WebGL! */
-
-    var shader = new window.tgl.Shader(window.Shaders, "blend-test-vert", "blend-test-frag");
-    var packShader = new window.tgl.Shader(window.Shaders, "blend-test-vert", "blend-test-pack-frag");
-    var target = new window.tgl.Texture(1, 1, 4, true, false, false, new Float32Array([-6.0, 10.0, 30.0, 2.0]));
-    var fbo = new window.tgl.RenderTarget();
-    var vbo = new window.tgl.VertexBuffer();
-    vbo.bind();
-    vbo.addAttribute("Position", 3, gl.FLOAT, false);
-    vbo.init(4);
-    vbo.copy(new Float32Array([1.0, 1.0, 0.0, -1.0, 1.0, 0.0, -1.0, -1.0, 0.0, 1.0, -1.0, 0.0]));
-
-    gl.viewport(0, 0, 1, 1);
-
-    fbo.bind();
-    fbo.drawBuffers(1);
-    fbo.attachTexture(target, 0);
-
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.ONE, gl.ONE);
-
-    shader.bind();
-    vbo.draw(shader, gl.TRIANGLE_FAN);
-    vbo.draw(shader, gl.TRIANGLE_FAN);
-
-    fbo.unbind();
-    gl.disable(gl.BLEND);
-
-    /* Of course we can neither read back texture contents or read floating point
-       FBO attachments in WebGL, so we have to do another pass, convert to uint8
-       and check whether the results are ok.
-       Hurray WebGL! */
-    packShader.bind();
-    target.bind(0);
-    packShader.uniformTexture("Tex", target);
-    vbo.draw(packShader, gl.TRIANGLE_FAN);
-
-    var pixels = new Uint8Array([0, 0, 0, 0]);
-    gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-
-    if (pixels[0] != 8 || pixels[1] != 128 || pixels[2] != 16 || pixels[3] != 4) {
-        console.log(
-            "Floating point blending test failed. Result was " + pixels + " but should have been " + [8, 128, 16, 4],
-        );
-        throw new Error("Your platform does not support floating point attachments");
-    }
+Tantalum.prototype.setupGL = async function () {
+    this.backend = await window.selectBackend(this.canvas);
+    window.tantalumBackendKind = this.backend.caps.kind; // consumed by Playwright specs
 };
 
 Tantalum.prototype.setupUI = function () {
+    console.log("Tantalum backend:", this.backend.caps.kind);
+
     function map(a, b) {
         return [(a * 0.5) / 1.78 + 0.5, -b * 0.5 + 0.5];
     }
@@ -228,7 +152,7 @@ Tantalum.prototype.setupUI = function () {
         sceneNames.push(config.scenes[i].name);
     }
 
-    this.renderer = new tcore.Renderer(this.gl, this.canvas.width, this.canvas.height, sceneShaders);
+    this.renderer = new tcore.Renderer(this.backend, this.canvas.width, this.canvas.height, sceneShaders);
     this.spectrumRenderer = new tcore.SpectrumRenderer(this.spectrumCanvas, this.renderer.getEmissionSpectrum());
 
     /* Let's try and make member variables in JS a little less verbose... */

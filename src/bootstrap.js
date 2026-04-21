@@ -1,3 +1,4 @@
 window.addEventListener("DOMContentLoaded", function () {
-    new window.Tantalum();
+    const t = new window.Tantalum();
+    t.init();
 });

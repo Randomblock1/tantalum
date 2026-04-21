@@ -9,6 +9,11 @@
         <script src="src/tantalum-shaders.js"></script>
         <script src="src/spectrum.js"></script>
         <script src="src/gasspectra.js"></script>
+        <script type="module" src="src/backend/webgl.js"></script>
+        <script type="module">
+          import { selectBackend } from "./src/backend/select.js";
+          window.selectBackend = selectBackend;
+        </script>
         <script src="src/tantalum-core.js"></script>
         <script src="src/tantalum-ui.js"></script>
         <script src="src/download.js"></script>
