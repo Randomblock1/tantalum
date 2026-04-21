@@ -25,7 +25,9 @@ Tantalum.prototype.init = async function () {
     } catch (e) {
         this.fail(
             "Ooops! Something unexpected happened. The error message is listed below:<br/>" +
-                "<pre>" + e.message + "</pre>",
+                "<pre>" +
+                e.message +
+                "</pre>",
         );
         return;
     }
@@ -63,7 +65,11 @@ Tantalum.prototype.schedulePrewarm = function () {
             window.requestIdleCallback(runSlice, { timeout: 50 });
         } else {
             setTimeout(function () {
-                runSlice({ timeRemaining: function () { return 0; } });
+                runSlice({
+                    timeRemaining: function () {
+                        return 0;
+                    },
+                });
             }, 0);
         }
     }.bind(this);

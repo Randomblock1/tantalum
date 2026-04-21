@@ -162,9 +162,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
 
     const passModule = loadShaderModule("pass");
     const passLayout = device.createBindGroupLayout({
-        entries: [
-            { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
-        ],
+        entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } }],
     });
     const passPipeline = device.createRenderPipeline({
         layout: device.createPipelineLayout({ bindGroupLayouts: [passLayout] }),
@@ -253,10 +251,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         const tex = device.createTexture({
             size: { width: w, height: h },
             format: "rgba32float",
-            usage:
-                GPUTextureUsage.TEXTURE_BINDING |
-                GPUTextureUsage.RENDER_ATTACHMENT |
-                GPUTextureUsage.COPY_DST,
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST,
         });
         return { width: w, height: h, texture: tex, view: tex.createView() };
     }
