@@ -6,7 +6,8 @@ Tantalum Sample Render
 
 Tantalum is a physically based 2D renderer written out of personal interest. The idea of this project was to build a light transport simulation using the same mathematical tools used in academic and movie production renderers, but in a simplified 2D setting. The 2D setting allows for faster render times and a more accessible way of understanding and interacting with light, even for people with no prior knowledge or interest in rendering.
 
-Tantalum is written in JavaScript and WebGL 2.
+Tantalum is written in JavaScript. It renders using WebGPU where available and
+falls back to WebGL 2 otherwise, so the page works across browsers.
 
 ## Running locally
 
@@ -29,13 +30,11 @@ Open `http://127.0.0.1:8000/tantalum.html` for the classic script bundle, or `ht
 
 ## Shader compilation
 
-GLSL sources live under `[shaders/](shaders/)`. Packing them into `[src/tantalum-shaders.js](src/tantalum-shaders.js)` requires **Python 3**:
-
-```bash
-python3 compile-shaders.py
-```
-
-Always run this after editing shader files, and commit the regenerated `tantalum-shaders.js` (CI enforces that the tree is clean after regeneration).
+GLSL sources live under `shaders/glsl/` and are packed into `src/tantalum-shaders.js`
+for the WebGL path via `python3 compile-shaders.py`. WGSL sources live under
+`shaders/wgsl/` and are imported directly at build time via Vite `?raw` imports
+(no build step needed). Always run `compile-shaders.py` after editing GLSL and
+commit the regenerated file (CI enforces that the tree is clean).
 
 ## WebGL 2 requirements
 
@@ -44,6 +43,18 @@ The renderer targets **WebGL 2** and relies on these extensions (the app checks 
 - `OES_texture_float_linear`
 - `EXT_color_buffer_float` (required for float render targets)
 - `EXT_float_blend` (preferred; otherwise a small blending self-test decides whether float render targets work)
+
+## Browser support
+
+Tantalum selects the best available backend at startup:
+
+| Backend | Requires                                                                                                    |
+| ------- | ----------------------------------------------------------------------------------------------------------- |
+| WebGPU  | `navigator.gpu`, adapter features `float32-blendable` + `float32-filterable`                                |
+| WebGL 2 | Extensions `OES_texture_float_linear`, `EXT_color_buffer_float`, and working float blending (auto-detected) |
+
+The page falls back to WebGL 2 silently if WebGPU isn't available. Check which
+backend is active via `window.tantalumBackendKind` in DevTools (`"webgpu"` or `"webgl2"`).
 
 ## Production build
 
