@@ -8,7 +8,6 @@ export default defineConfig({
     workers: 1,
     reporter: "list",
     use: {
-        ...devices["Desktop Chrome"],
         baseURL: "http://127.0.0.1:5173",
         trace: "on-first-retry",
     },
@@ -18,4 +17,22 @@ export default defineConfig({
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
     },
+    projects: [
+        {
+            name: "webgl",
+            testMatch: /smoke\.spec\.js$/,
+            use: {
+                ...devices["Desktop Chrome"],
+                launchOptions: { args: ["--disable-features=WebGPU"] },
+            },
+        },
+        {
+            name: "webgpu",
+            testMatch: /webgpu-smoke\.spec\.js$/,
+            use: {
+                ...devices["Desktop Chrome"],
+                launchOptions: { args: ["--enable-unsafe-webgpu", "--enable-features=Vulkan"] },
+            },
+        },
+    ],
 });

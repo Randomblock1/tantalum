@@ -59,11 +59,19 @@ export default [
         ...legacyShared,
     },
     {
-        files: ["vite.config.js", "eslint.config.js", "playwright.config.js", "tests/**/*.js"],
+        files: ["vite.config.js", "eslint.config.js", "playwright.config.js"],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: "module",
             globals: { ...globals.node },
+        },
+    },
+    {
+        files: ["tests/**/*.js"],
+        languageOptions: {
+            ecmaVersion: 2022,
+            sourceType: "module",
+            globals: { ...globals.node, ...browserGlobals },
         },
     },
 ];
