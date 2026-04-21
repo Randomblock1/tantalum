@@ -39,10 +39,13 @@ jobs:
 
             - run: npm run build
 
+            - name: Install Mesa drivers for WebGPU
+              run: sudo apt-get install -y mesa-vulkan-drivers libnss3
+
             - name: Install Playwright browser
               run: npx playwright install chromium --with-deps
 
-            - name: End-to-end smoke
+            - name: End-to-end smoke (WebGL + WebGPU)
               run: npm run test:e2e
               env:
                   CI: true
