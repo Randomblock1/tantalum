@@ -95,6 +95,9 @@ body {
 .col-11-12 {
     width: 91.666667%;
 }
+.col-12-12 {
+    width: 100%;
+}
 .col-left {
     float: left;
 }
@@ -117,6 +120,49 @@ body {
 
 .center-tight {
     text-align: center;
+}
+
+.override-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font:
+        bold 16px "Helvetica Neue",
+        Helvetica,
+        Arial,
+        sans-serif;
+    color: #34495e;
+}
+
+.override-fields {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.override-input {
+    box-sizing: border-box;
+    padding: 8px 10px;
+    border: 1px solid #c8d0da;
+    border-radius: 4px;
+    background: #fff;
+    color: #34495e;
+    font-size: 15px;
+    width: 140px;
+}
+
+.override-input-wide {
+    width: 180px;
+}
+
+.override-separator {
+    font:
+        bold 18px "Helvetica Neue",
+        Helvetica,
+        Arial,
+        sans-serif;
+    color: #34495e;
 }
 
 .button-group-vert {

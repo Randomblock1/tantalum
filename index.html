@@ -15,6 +15,14 @@
             <div id="render-progress"></div>
             <p class="progress-label" id="render-progress-label"></p>
             <div class="control-row clearfix">
+                <div class="col-12-12 col-left col-padding">
+                    <label class="override-toggle" for="override-controls">
+                        <input type="checkbox" id="override-controls" />
+                        Override light paths, bounces, resolution
+                    </label>
+                </div>
+            </div>
+            <div class="control-row clearfix">
                 <div class="col-3-12 col-left col-padding">
                     <h3 class="control-title">Download</h3>
                     <div class="button stretch-button active" id="save-button">Download as PNG</div>
@@ -22,6 +30,11 @@
                 <div class="col-8-12 col-left col-padding">
                     <h3 class="control-title">Resolution</h3>
                     <div id="resolution-selector"></div>
+                    <div id="resolution-override" class="override-fields" style="display: none">
+                        <input id="resolution-width" class="override-input override-input-wide" type="number" step="1" />
+                        <span class="override-separator">x</span>
+                        <input id="resolution-height" class="override-input override-input-wide" type="number" step="1" />
+                    </div>
                 </div>
             </div>
             <div class="control-row clearfix">
@@ -47,10 +60,16 @@
                 <div class="col-3-12 col-left col-padding">
                     <h3 class="control-title">Light Path Length</h3>
                     <div id="path-length"></div>
+                    <div id="path-length-override" class="override-fields" style="display: none">
+                        <input id="path-length-input" class="override-input" type="number" step="1" />
+                    </div>
                 </div>
                 <div class="col-8-12 col-left col-padding">
                     <h3 class="control-title">Sample Count</h3>
                     <div id="sample-count"></div>
+                    <div id="sample-count-override" class="override-fields" style="display: none">
+                        <input id="sample-count-input" class="override-input" type="number" step="1" />
+                    </div>
                 </div>
             </div>
         </div>

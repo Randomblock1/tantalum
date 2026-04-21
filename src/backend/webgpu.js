@@ -444,10 +444,10 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
             },
             composite({ program, screenBuffer, exposure }) {
                 const uBuf = device.createBuffer({
-                    size: 16,
+                    size: 32,
                     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
                 });
-                device.queue.writeBuffer(uBuf, 0, new Float32Array([exposure, 0, 0, 0]));
+                device.queue.writeBuffer(uBuf, 0, new Float32Array([exposure, 0, 0, 0, 0, 0, 0, 0]));
                 const group = device.createBindGroup({
                     layout: program.layout,
                     entries: [

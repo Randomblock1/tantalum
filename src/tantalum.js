@@ -167,18 +167,37 @@ Tantalum.prototype.setupUI = function () {
 
     this.progressBar = new tui.ProgressBar("render-progress", true);
 
+    var overrideToggle = document.getElementById("override-controls");
+    var resolutionOverride = document.getElementById("resolution-override");
+    var pathLengthOverride = document.getElementById("path-length-override");
+    var sampleCountOverride = document.getElementById("sample-count-override");
+    var resolutionWidthInput = document.getElementById("resolution-width");
+    var resolutionHeightInput = document.getElementById("resolution-height");
+    var pathLengthInput = document.getElementById("path-length-input");
+    var sampleCountInput = document.getElementById("sample-count-input");
+
+    var currentResolution = {
+        width: canvas.width,
+        height: canvas.height,
+    };
+    var currentPathLength = 12;
+    var currentSampleCount = 1000000;
+
     var resolutionLabels = [];
     for (var i = 0; i < config.resolutions.length; ++i)
         resolutionLabels.push(config.resolutions[i][0] + "x" + config.resolutions[i][1]);
 
-    new tui.ButtonGroup("resolution-selector", false, resolutionLabels, function (idx) {
+    var resolutionSelector = new tui.ButtonGroup("resolution-selector", false, resolutionLabels, function (idx) {
         var width = config.resolutions[idx][0];
         var height = config.resolutions[idx][1];
+        currentResolution.width = width;
+        currentResolution.height = height;
         content.style.width = width + "px";
         content.style.height = height + "px";
         canvas.width = width;
         canvas.height = height;
         renderer.changeResolution(width, height);
+        syncOverrideInputs();
     });
     var spreadSelector = new tui.ButtonGroup(
         "spread-selector",
@@ -203,17 +222,106 @@ Tantalum.prototype.setupUI = function () {
     });
 
     var bounceSlider = new tui.Slider("path-length", 1, 20, true, function (length) {
+        currentPathLength = length;
         this.setLabel(length - 1 + " light bounces");
         renderer.setMaxPathLength(length);
+        syncOverrideInputs();
     });
     bounceSlider.setValue(12);
 
     var sampleSlider = new tui.Slider("sample-count", 400, 700, true, function (exponent100) {
         var sampleCount = Math.floor(Math.pow(10, exponent100 * 0.01));
+        currentSampleCount = sampleCount;
         this.setLabel(sampleCount + " light paths");
         renderer.setMaxSampleCount(sampleCount);
+        syncOverrideInputs();
     });
     sampleSlider.setValue(600);
+
+    function syncOverrideInputs() {
+        resolutionWidthInput.value = currentResolution.width;
+        resolutionHeightInput.value = currentResolution.height;
+        pathLengthInput.value = currentPathLength;
+        sampleCountInput.value = currentSampleCount;
+    }
+
+    function applyResolution(width, height) {
+        currentResolution.width = width;
+        currentResolution.height = height;
+        content.style.width = width + "px";
+        content.style.height = height + "px";
+        canvas.width = width;
+        canvas.height = height;
+        renderer.changeResolution(width, height);
+        syncOverrideInputs();
+    }
+
+    function applyPathLength(length) {
+        currentPathLength = length;
+        renderer.setMaxPathLength(length);
+        bounceSlider.setValueSilently(length);
+        syncOverrideInputs();
+    }
+
+    function applySampleCount(sampleCount) {
+        currentSampleCount = sampleCount;
+        renderer.setMaxSampleCount(sampleCount);
+        sampleSlider.setValueSilently(Math.round((Math.log(sampleCount) / Math.log(10)) * 100));
+        syncOverrideInputs();
+    }
+
+    function readNumber(input) {
+        var value = Number(input.value);
+        return Number.isFinite(value) ? Math.round(value) : null;
+    }
+
+    resolutionWidthInput.addEventListener("input", function () {
+        var width = readNumber(resolutionWidthInput);
+        var height = readNumber(resolutionHeightInput);
+        if (width !== null && height !== null && width > 0 && height > 0) applyResolution(width, height);
+    });
+    resolutionHeightInput.addEventListener("input", function () {
+        var width = readNumber(resolutionWidthInput);
+        var height = readNumber(resolutionHeightInput);
+        if (width !== null && height !== null && width > 0 && height > 0) applyResolution(width, height);
+    });
+    pathLengthInput.addEventListener("input", function () {
+        var length = readNumber(pathLengthInput);
+        if (length !== null && length > 0) applyPathLength(length);
+    });
+    sampleCountInput.addEventListener("input", function () {
+        var sampleCount = readNumber(sampleCountInput);
+        if (sampleCount !== null && sampleCount > 0) applySampleCount(sampleCount);
+    });
+
+    function selectResolutionPreset(width, height) {
+        for (var i = 0; i < config.resolutions.length; ++i) {
+            if (config.resolutions[i][0] == width && config.resolutions[i][1] == height) {
+                resolutionSelector.select(i);
+                return;
+            }
+        }
+    }
+
+    function setOverrideMode(enabled) {
+        resolutionSelector.show(!enabled);
+        bounceSlider.show(!enabled);
+        sampleSlider.show(!enabled);
+
+        resolutionOverride.style.display = enabled ? "flex" : "none";
+        pathLengthOverride.style.display = enabled ? "flex" : "none";
+        sampleCountOverride.style.display = enabled ? "flex" : "none";
+
+        if (enabled) {
+            syncOverrideInputs();
+        } else {
+            selectResolutionPreset(currentResolution.width, currentResolution.height);
+        }
+    }
+
+    overrideToggle.addEventListener("change", function () {
+        setOverrideMode(overrideToggle.checked);
+    });
 
     var gasOptions = [];
     for (var i = 0; i < GasDischargeLines.length; ++i) gasOptions.push(GasDischargeLines[i].name);
@@ -242,6 +350,8 @@ Tantalum.prototype.setupUI = function () {
     );
 
     selectScene(0);
+    syncOverrideInputs();
+    setOverrideMode(false);
 
     this.overlay.className = "render-help";
     this.overlay.offsetHeight; /* Flush CSS changes */

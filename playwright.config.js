@@ -20,7 +20,7 @@ export default defineConfig({
     projects: [
         {
             name: "webgl",
-            testMatch: /smoke\.spec\.js$/,
+            testMatch: /(?:smoke|override-controls)\.spec\.js$/,
             use: {
                 ...devices["Desktop Chrome"],
                 launchOptions: { args: ["--disable-features=WebGPU"] },

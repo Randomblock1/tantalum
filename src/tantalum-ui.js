@@ -15,6 +15,7 @@
 
         this.group = document.createElement(vertical ? "ul" : "div");
         this.group.className = vertical ? "button-group-vert" : "button-group-horz";
+        this.group.id = targetId + "-group";
         this.buttons = [];
 
         for (var i = 0; i < labels.length; ++i) {
@@ -45,6 +46,10 @@
 
         if (this.selectedButton != idx && this.selectionCallback) this.selectionCallback(idx);
         this.selectedButton = idx;
+    };
+
+    exports.ButtonGroup.prototype.show = function (show) {
+        this.group.style.display = show ? "block" : "none";
     };
 
     exports.ProgressBar = function (targetId, hasLabel) {
@@ -109,6 +114,7 @@
         this.sliderBar = document.createElement("div");
         this.sliderBar.className = "slider-bar";
         this.sliderBackground.appendChild(this.sliderBar);
+        this.sliderBackground.id = targetId + "-slider";
 
         this.sliderHandle = document.createElement("a");
         this.sliderHandle.className = "slider-handle";
@@ -159,6 +165,13 @@
 
             if (this.callback) this.callback(value);
         }
+    };
+
+    exports.Slider.prototype.setValueSilently = function (value) {
+        var callback = this.callback;
+        this.callback = null;
+        this.setValue(value);
+        this.callback = callback;
     };
 
     exports.Slider.prototype.setPosition = function (position) {
