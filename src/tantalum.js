@@ -77,8 +77,6 @@ Tantalum.prototype.setupGL = async function () {
 };
 
 Tantalum.prototype.setupUI = function () {
-    console.log("Tantalum backend:", this.backend.caps.kind);
-
     function map(a, b) {
         return [(a * 0.5) / 1.78 + 0.5, -b * 0.5 + 0.5];
     }
