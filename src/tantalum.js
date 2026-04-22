@@ -11,6 +11,7 @@ var Tantalum = function () {
     this._prewarmStarted = false;
     this._prewarmStartMs = 0;
     this._prewarmBudgetMs = 250;
+    this.unpresentedTraceSteps = 0;
 };
 
 Tantalum.prototype.init = async function () {
@@ -40,6 +41,7 @@ Tantalum.prototype.init = async function () {
 Tantalum.prototype.schedulePrewarm = function () {
     if (this._prewarmStarted) return;
     if (!this.renderer) return;
+    if (!this.renderer.shouldPrewarm()) return;
     this._prewarmStarted = true;
     this._prewarmStartMs = performance.now();
 
@@ -243,18 +245,9 @@ Tantalum.prototype.setupUI = function () {
         renderer.setNormalizedEmitterPos(config.scenes[idx].posA, config.scenes[idx].posB);
     }
 
-    /* Debounce prewarm: during continuous interaction (emitter drag, laser
-       rotation, slider scrub) every reset cancels the pending prewarm and
-       restarts the timer, so the 250 ms compute burst only runs once the
-       user goes quiet. */
-    var prewarmTimer = null;
     renderer.onReset = function () {
-        if (prewarmTimer !== null) clearTimeout(prewarmTimer);
-        prewarmTimer = setTimeout(function () {
-            prewarmTimer = null;
-            self._prewarmStarted = false;
-            self.schedulePrewarm();
-        }, 80);
+        self.unpresentedTraceSteps = 0;
+        self._prewarmStarted = false;
     };
     new tui.ButtonGroup("scene-selector", true, sceneNames, selectScene);
 
@@ -434,7 +427,18 @@ Tantalum.prototype.fail = function (message) {
 Tantalum.prototype.renderLoop = function (timestamp) {
     window.requestAnimationFrame(this.boundRenderLoop);
 
-    if (!this.renderer.finished()) this.renderer.render(timestamp);
+    if (!this.renderer.finished()) {
+        var stepsThisFrame = this.renderer.traceStepsPerFrame();
+        for (var i = 0; i < stepsThisFrame && !this.renderer.finished(); ++i) {
+            this.renderer.traceStep(i == 0 ? timestamp : performance.now());
+            this.unpresentedTraceSteps++;
+
+            if (this.renderer.shouldPresentFrame(this.unpresentedTraceSteps, false)) {
+                this.renderer.present();
+                this.unpresentedTraceSteps = 0;
+            }
+        }
+    }
 
     if (this.saveImageData) {
         /* Ensure we redraw the image before we grab it. This is a strange one:
@@ -444,7 +448,10 @@ Tantalum.prototype.renderLoop = function (timestamp) {
            the results are garbage unless we rendered to it in that frame.
            There's most likely some browser/ANGLE meddling happening here, but
            in interest of my mental health I'm not going to dig deeper into this */
-        if (this.renderer.finished()) this.renderer.composite();
+        if (this.unpresentedTraceSteps > 0 || this.renderer.finished()) {
+            this.renderer.present();
+            this.unpresentedTraceSteps = 0;
+        }
 
         var fileName = "Tantalum";
         if (this.savedImages > 0) fileName += this.savedImages + 1;

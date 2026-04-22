@@ -1,8 +1,15 @@
+fn isRayAlive(rgbLambda: vec4f) -> bool {
+    return any(rgbLambda.rgb != vec3f(0.0));
+}
+
 fn traceStep(
     state: ptr<function, vec4f>,
     posDir: ptr<function, vec4f>,
     rgbLambda: ptr<function, vec4f>,
 ) {
+    if (!isRayAlive(*rgbLambda)) {
+        return;
+    }
     let ray = unpackRay(*posDir);
     var isect: Intersection;
     isect.tMin = 1e-4;

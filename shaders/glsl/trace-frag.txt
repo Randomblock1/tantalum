@@ -35,10 +35,21 @@ Ray unpackRay(vec4 posDir) {
     return Ray(pos, normalize(dir), 1.0/dir, sign(dir));
 }
 
+bool isRayAlive(vec4 rgbLambda) {
+    return any(notEqual(rgbLambda.rgb, vec3(0.0)));
+}
+
 void main() {
     vec4 posDir    = texture(PosData, vTexCoord);
     vec4 state     = texture(RngData, vTexCoord);
     vec4 rgbLambda = texture(RgbData, vTexCoord);
+
+    if (!isRayAlive(rgbLambda)) {
+        oPosDir = posDir;
+        oRng = state;
+        oRgbLambda = rgbLambda;
+        return;
+    }
     
     Ray ray = unpackRay(posDir);
     Intersection isect;
