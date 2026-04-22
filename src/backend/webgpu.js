@@ -6,6 +6,7 @@
  */
 
 import { expandIncludes } from "./wgsl-loader.js";
+import { createBinaryCache, createTernaryCache, createUnaryCache } from "./webgpu-bind-group-cache.js";
 
 /* Shader sources — populated as phases C–E land real modules. */
 import preambleSrc from "../../shaders/wgsl/preamble.wgsl?raw";
@@ -219,7 +220,98 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         programs.set(`trace:${scene}`, { kind: "trace", pipeline: pipe, layout: traceLayout, scene });
     }
 
-    /* Stubs — filled in by later tasks. */
+    /* Persistent uniform buffers — one per pass, reused every frame. */
+    const initUBuf = device.createBuffer({
+        size: 48,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    const traceUBuf = device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    const splatUBuf = device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    const composeUBuf = device.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    /* Scratch ArrayBuffers for packing uniforms without per-frame allocation. */
+    const initScratch = new ArrayBuffer(48);
+    const initScratchF32 = new Float32Array(initScratch);
+    const initScratchU32 = new Uint32Array(initScratch);
+    const traceScratch = new ArrayBuffer(16);
+    const traceScratchU32 = new Uint32Array(traceScratch);
+    const splatScratch = new ArrayBuffer(16);
+    const splatScratchF32 = new Float32Array(splatScratch);
+    const splatScratchU32 = new Uint32Array(splatScratch);
+    const composeScratch = new ArrayBuffer(16);
+    const composeScratchF32 = new Float32Array(composeScratch);
+
+    /* Bind group caches keyed by object identity so replaced textures/buffers
+       can fall out of the cache naturally after resizes or resource rebuilds. */
+    let spectrumHandle = null;
+    const getInitBindGroup = createTernaryCache((stateIn, stateOut, spectrum) =>
+        device.createBindGroup({
+            layout: initLayout,
+            entries: [
+                { binding: 0, resource: { buffer: initUBuf } },
+                { binding: 1, resource: { buffer: stateIn.buffer } },
+                { binding: 2, resource: { buffer: stateOut.buffer } },
+                { binding: 3, resource: spectrum.spectrum.view },
+                { binding: 4, resource: spectrum.emission.view },
+                { binding: 5, resource: spectrum.icdf.view },
+                { binding: 6, resource: spectrum.pdf.view },
+                { binding: 7, resource: linearSampler },
+            ],
+        }),
+    );
+    const getTraceBindGroup = createBinaryCache((stateIn, stateOut) =>
+        device.createBindGroup({
+            layout: traceLayout,
+            entries: [
+                { binding: 0, resource: { buffer: traceUBuf } },
+                { binding: 1, resource: { buffer: stateIn.buffer } },
+                { binding: 2, resource: { buffer: stateOut.buffer } },
+            ],
+        }),
+    );
+    const getSplatBindGroup = createBinaryCache((stateA, stateB) =>
+        device.createBindGroup({
+            layout: rayLayout,
+            entries: [
+                { binding: 0, resource: { buffer: splatUBuf } },
+                { binding: 1, resource: { buffer: stateA.buffer } },
+                { binding: 2, resource: { buffer: stateB.buffer } },
+            ],
+        }),
+    );
+    const getBlitBindGroup = createUnaryCache((src) =>
+        device.createBindGroup({
+            layout: passLayout,
+            entries: [{ binding: 0, resource: src.view }],
+        }),
+    );
+    const getComposeBindGroup = createUnaryCache((screen) =>
+        device.createBindGroup({
+            layout: composeLayout,
+            entries: [
+                { binding: 0, resource: { buffer: composeUBuf } },
+                { binding: 1, resource: screen.view },
+                { binding: 2, resource: composeSampler },
+            ],
+        }),
+    );
+
+    function currentSpectrumHandle() {
+        if (!spectrumHandle) {
+            throw new Error("WebGPU: spectrum resources must be uploaded before init dispatch");
+        }
+        return spectrumHandle;
+    }
+
     function createRayState(size) {
         const rayCount = size * size;
         const byteLen = rayCount * 48;
@@ -297,7 +389,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 { width: handle.width, height: 1 },
             );
         }
-        return {
+        const handle = {
             spectrum,
             emission,
             icdf,
@@ -307,6 +399,8 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
             updateIcdf: (data) => rewrite(icdf, data),
             updatePdf: (data) => rewrite(pdf, data),
         };
+        spectrumHandle = handle;
+        return handle;
     }
     function resize(w, h) {
         canvas.width = w;
@@ -316,40 +410,21 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
     function beginFrame() {
         const encoder = device.createCommandEncoder();
         return {
-            updateRayState({ program, stateIn, stateOut, uniforms, textureBindings, raySize, activeRows }) {
+            updateRayState({ program, stateIn, stateOut, uniforms, raySize, activeRows }) {
                 const isInit = program.kind === "init";
                 if (isInit) {
-                    const uBuf = device.createBuffer({
-                        size: 48,
-                        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-                    });
-                    const u = new ArrayBuffer(48);
-                    const f = new Float32Array(u);
-                    const i = new Uint32Array(u);
-                    f[0] = uniforms.EmitterPos[0];
-                    f[1] = uniforms.EmitterPos[1];
-                    f[2] = uniforms.EmitterDir[0];
-                    f[3] = uniforms.EmitterDir[1];
-                    f[4] = uniforms.AngularSpread[0];
-                    f[5] = uniforms.AngularSpread[1];
-                    f[6] = uniforms.SpatialSpread;
-                    f[7] = uniforms.EmitterPower;
-                    i[8] = raySize;
-                    i[9] = activeRows;
-                    device.queue.writeBuffer(uBuf, 0, u);
-                    const group = device.createBindGroup({
-                        layout: program.layout,
-                        entries: [
-                            { binding: 0, resource: { buffer: uBuf } },
-                            { binding: 1, resource: { buffer: stateIn.buffer } },
-                            { binding: 2, resource: { buffer: stateOut.buffer } },
-                            { binding: 3, resource: textureBindings.Spectrum.view },
-                            { binding: 4, resource: textureBindings.Emission.view },
-                            { binding: 5, resource: textureBindings.ICDF.view },
-                            { binding: 6, resource: textureBindings.PDF.view },
-                            { binding: 7, resource: linearSampler },
-                        ],
-                    });
+                    initScratchF32[0] = uniforms.EmitterPos[0];
+                    initScratchF32[1] = uniforms.EmitterPos[1];
+                    initScratchF32[2] = uniforms.EmitterDir[0];
+                    initScratchF32[3] = uniforms.EmitterDir[1];
+                    initScratchF32[4] = uniforms.AngularSpread[0];
+                    initScratchF32[5] = uniforms.AngularSpread[1];
+                    initScratchF32[6] = uniforms.SpatialSpread;
+                    initScratchF32[7] = uniforms.EmitterPower;
+                    initScratchU32[8] = raySize;
+                    initScratchU32[9] = activeRows;
+                    device.queue.writeBuffer(initUBuf, 0, initScratch);
+                    const group = getInitBindGroup(stateIn, stateOut, currentSpectrumHandle());
                     const pass = encoder.beginComputePass();
                     pass.setPipeline(program.pipeline);
                     pass.setBindGroup(0, group);
@@ -358,19 +433,12 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                     return;
                 }
                 /* trace */
-                const uBuf = device.createBuffer({
-                    size: 16,
-                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-                });
-                device.queue.writeBuffer(uBuf, 0, new Uint32Array([raySize, activeRows, 0, 0]));
-                const group = device.createBindGroup({
-                    layout: program.layout,
-                    entries: [
-                        { binding: 0, resource: { buffer: uBuf } },
-                        { binding: 1, resource: { buffer: stateIn.buffer } },
-                        { binding: 2, resource: { buffer: stateOut.buffer } },
-                    ],
-                });
+                traceScratchU32[0] = raySize;
+                traceScratchU32[1] = activeRows;
+                traceScratchU32[2] = 0;
+                traceScratchU32[3] = 0;
+                device.queue.writeBuffer(traceUBuf, 0, traceScratch);
+                const group = getTraceBindGroup(stateIn, stateOut);
                 const pass = encoder.beginComputePass();
                 pass.setPipeline(program.pipeline);
                 pass.setBindGroup(0, group);
@@ -378,21 +446,12 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 pass.end();
             },
             splatRays({ program, waveBuffer, stateA, stateB, raysVbo, raysDrawCount, aspect, clearFirst }) {
-                const uBuf = device.createBuffer({
-                    size: 16,
-                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-                });
-                device.queue.writeBuffer(uBuf, 0, new Uint32Array([0, stateA.size, 0, 0]));
-                /* Stride replaces the float0 slot with `aspect` so two writes don't overlap. */
-                device.queue.writeBuffer(uBuf, 0, new Float32Array([aspect]));
-                const group = device.createBindGroup({
-                    layout: program.layout,
-                    entries: [
-                        { binding: 0, resource: { buffer: uBuf } },
-                        { binding: 1, resource: { buffer: stateA.buffer } },
-                        { binding: 2, resource: { buffer: stateB.buffer } },
-                    ],
-                });
+                splatScratchF32[0] = aspect;
+                splatScratchU32[1] = stateA.size;
+                splatScratchU32[2] = 0;
+                splatScratchU32[3] = 0;
+                device.queue.writeBuffer(splatUBuf, 0, splatScratch);
+                const group = getSplatBindGroup(stateA, stateB);
                 const pass = encoder.beginRenderPass({
                     colorAttachments: [
                         {
@@ -410,10 +469,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 pass.end();
             },
             blit({ program, src, dst, additive }) {
-                const group = device.createBindGroup({
-                    layout: program.layout,
-                    entries: [{ binding: 0, resource: src.view }],
-                });
+                const group = getBlitBindGroup(src);
                 const pass = encoder.beginRenderPass({
                     colorAttachments: [
                         {
@@ -443,19 +499,9 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 pass.end();
             },
             composite({ program, screenBuffer, exposure }) {
-                const uBuf = device.createBuffer({
-                    size: 32,
-                    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-                });
-                device.queue.writeBuffer(uBuf, 0, new Float32Array([exposure, 0, 0, 0, 0, 0, 0, 0]));
-                const group = device.createBindGroup({
-                    layout: program.layout,
-                    entries: [
-                        { binding: 0, resource: { buffer: uBuf } },
-                        { binding: 1, resource: screenBuffer.view },
-                        { binding: 2, resource: composeSampler },
-                    ],
-                });
+                composeScratchF32[0] = exposure;
+                device.queue.writeBuffer(composeUBuf, 0, composeScratch);
+                const group = getComposeBindGroup(screenBuffer);
                 const pass = encoder.beginRenderPass({
                     colorAttachments: [
                         {
