@@ -10,6 +10,12 @@ in vec3 TexCoord;
 out vec3 vColor;
 
 void main() {
+    vec3 rgb = texture(RgbData, TexCoord.xy).rgb;
+    if (all(equal(rgb, vec3(0.0)))) {
+        gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
+        vColor = vec3(0.0);
+        return;
+    }
     vec2 posA = texture(PosDataA, TexCoord.xy).xy;
     vec2 posB = texture(PosDataB, TexCoord.xy).xy;
     vec2 pos = mix(posA, posB, TexCoord.z);
@@ -17,5 +23,5 @@ void main() {
     float biasCorrection = clamp(length(dir)/max(abs(dir.x), abs(dir.y)), 1.0, 1.414214);
     
     gl_Position = vec4(pos.x/Aspect, pos.y, 0.0, 1.0);
-    vColor = texture(RgbData, TexCoord.xy).rgb*biasCorrection;
+    vColor = rgb*biasCorrection;
 }

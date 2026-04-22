@@ -1,6 +1,8 @@
 (function (exports) {
     var LAMBDA_MIN = 360.0;
     var LAMBDA_MAX = 750.0;
+    var TRACE_STEPS_PER_FRAME = 8;
+    var PRESENT_EVERY_TRACE_STEPS = 4;
 
     var Renderer = function (backend, width, height, scenes) {
         this.backend = backend;
@@ -63,7 +65,7 @@
     Renderer.SPREAD_AREA = 4;
 
     Renderer.prototype.resetActiveBlock = function () {
-        this.activeBlock = 4;
+        this.activeBlock = this.raySize;
     };
 
     Renderer.prototype.setEmissionSpectrumType = function (type) {
@@ -186,6 +188,18 @@
         this.maxSampleCount = count;
     };
 
+    Renderer.prototype.traceStepsPerFrame = function () {
+        return TRACE_STEPS_PER_FRAME;
+    };
+
+    Renderer.prototype.shouldPresentFrame = function (stepsSincePresent, forcePresent) {
+        return forcePresent || this.finished() || stepsSincePresent >= PRESENT_EVERY_TRACE_STEPS;
+    };
+
+    Renderer.prototype.shouldPrewarm = function () {
+        return false;
+    };
+
     Renderer.prototype.changeResolution = function (width, height) {
         if (this.width && this.height) {
             this.emitterPos[0] = ((this.emitterPos[0] + 0.5) * width) / this.width - 0.5;
@@ -298,6 +312,10 @@
     };
 
     Renderer.prototype.composite = function () {
+        this.present();
+    };
+
+    Renderer.prototype.present = function () {
         var frame = this.backend.beginFrame();
         frame.composite({
             program: this.compositeProgram,
@@ -320,10 +338,9 @@
         }
     };
 
-    Renderer.prototype.render = function (timestamp, _isPrewarm) {
+    Renderer.prototype.traceStep = function (timestamp) {
         if (timestamp === undefined || timestamp === null) timestamp = performance.now();
         this.needsReset = true;
-        this.elapsedTimes.push(timestamp);
 
         var current = this.currentState;
         var next = 1 - current;
@@ -393,40 +410,16 @@
                 this.samplesTraced += this.raySize * this.activeBlock;
                 this.wavesTraced += 1;
                 this.pathLength = 0;
-
-                if (this.elapsedTimes.length > 5) {
-                    var avgTime = 0;
-                    for (var i = 1; i < this.elapsedTimes.length; ++i)
-                        avgTime += this.elapsedTimes[i] - this.elapsedTimes[i - 1];
-                    avgTime /= this.elapsedTimes.length - 1;
-
-                    /* Let's try to stay at reasonable frame times. Targeting 16ms is
-                       a bit tricky because there's a lot of variability in how often
-                       the browser executes this loop and 16ms might well not be
-                       reachable, but 24ms seems to do ok */
-                    var blockMax = this.raySize; /* Cannot exceed ray buffer height */
-                    var delta = 0;
-                    if (avgTime > 40.0) delta = -32;
-                    else if (avgTime > 24.0) delta = -8;
-                    else if (avgTime < 12.0) delta = +32;
-                    else if (avgTime < 16.0) delta = +16;
-                    else delta = +4;
-
-                    this.activeBlock = Math.max(4, Math.min(blockMax, this.activeBlock + delta));
-
-                    this.elapsedTimes = [this.elapsedTimes[this.elapsedTimes.length - 1]];
-                }
             }
         }
-
-        frame.composite({
-            program: this.compositeProgram,
-            screenBuffer: this.screenBuffer,
-            exposure: this.width / Math.max(this.samplesTraced, this.raySize * this.activeBlock),
-        });
         frame.submit();
 
         this.currentState = next;
+    };
+
+    Renderer.prototype.render = function (timestamp, _isPrewarm) {
+        this.traceStep(timestamp);
+        this.present();
     };
 
     var SpectrumRenderer = function (canvas, spectrum) {
