@@ -80,6 +80,36 @@ Tantalum.prototype.schedulePrewarm = function () {
 Tantalum.prototype.setupGL = async function () {
     this.backend = await window.selectBackend(this.canvas);
     window.tantalumBackendKind = this.backend.caps.kind; // consumed by Playwright specs
+    this.setupBackendIndicator();
+};
+
+Tantalum.prototype.setupBackendIndicator = function () {
+    var el = document.getElementById("backend-indicator");
+    if (!el) return;
+    var kind = this.backend.caps.kind;
+    var label = kind === "webgpu" ? "WebGPU" : "WebGL 2";
+    var other = kind === "webgpu" ? "webgl" : "webgpu";
+    var otherLabel = kind === "webgpu" ? "WebGL 2" : "WebGPU";
+    /* WebGL is always an option; WebGPU only if the browser exposes the API. */
+    var canSwitch = kind === "webgpu" || "gpu" in navigator;
+
+    el.textContent = "Running on " + label;
+    if (!canSwitch) return;
+
+    el.appendChild(document.createTextNode(" — "));
+    var link = document.createElement("a");
+    link.href = "#";
+    link.textContent = "switch to " + otherLabel;
+    link.addEventListener("click", function (e) {
+        e.preventDefault();
+        try {
+            localStorage.setItem("tantalum-backend", other);
+        } catch (_) {
+            /* localStorage unavailable — reload without persistence. */
+        }
+        window.location.reload();
+    });
+    el.appendChild(link);
 };
 
 Tantalum.prototype.setupUI = function () {
@@ -206,11 +236,26 @@ Tantalum.prototype.setupUI = function () {
         renderer.setSpreadType.bind(renderer),
     );
 
+    var self = this;
     function selectScene(idx) {
         renderer.changeScene(idx);
         spreadSelector.select(config.scenes[idx].spread);
         renderer.setNormalizedEmitterPos(config.scenes[idx].posA, config.scenes[idx].posB);
     }
+
+    /* Debounce prewarm: during continuous interaction (emitter drag, laser
+       rotation, slider scrub) every reset cancels the pending prewarm and
+       restarts the timer, so the 250 ms compute burst only runs once the
+       user goes quiet. */
+    var prewarmTimer = null;
+    renderer.onReset = function () {
+        if (prewarmTimer !== null) clearTimeout(prewarmTimer);
+        prewarmTimer = setTimeout(function () {
+            prewarmTimer = null;
+            self._prewarmStarted = false;
+            self.schedulePrewarm();
+        }, 80);
+    };
     new tui.ButtonGroup("scene-selector", true, sceneNames, selectScene);
 
     var mouseListener = new tui.MouseListener(canvas, renderer.setEmitterPos.bind(renderer));
@@ -241,7 +286,7 @@ Tantalum.prototype.setupUI = function () {
     function syncOverrideInputs() {
         resolutionWidthInput.value = currentResolution.width;
         resolutionHeightInput.value = currentResolution.height;
-        pathLengthInput.value = currentPathLength;
+        pathLengthInput.value = currentPathLength - 1;
         sampleCountInput.value = currentSampleCount;
     }
 
@@ -286,8 +331,8 @@ Tantalum.prototype.setupUI = function () {
         if (width !== null && height !== null && width > 0 && height > 0) applyResolution(width, height);
     });
     pathLengthInput.addEventListener("input", function () {
-        var length = readNumber(pathLengthInput);
-        if (length !== null && length > 0) applyPathLength(length);
+        var bounces = readNumber(pathLengthInput);
+        if (bounces !== null && bounces > 0) applyPathLength(bounces + 1);
     });
     sampleCountInput.addEventListener("input", function () {
         var sampleCount = readNumber(sampleCountInput);

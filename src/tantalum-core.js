@@ -221,6 +221,8 @@
         var frame = this.backend.beginFrame();
         frame.clearTexture(this.screenBuffer);
         frame.submit();
+
+        if (typeof this.onReset === "function") this.onReset();
     };
 
     Renderer.prototype.setSpreadType = function (type) {

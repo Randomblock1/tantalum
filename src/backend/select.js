@@ -15,7 +15,12 @@ import { makeWebGPUBackend } from "./webgpu.js";
 const REQUIRED_FEATURES = ["float32-blendable", "float32-filterable"];
 
 export async function selectBackend(canvas, opts = {}) {
-    const preferWebGPU = opts.preferWebGPU !== false;
+    let preferWebGPU = opts.preferWebGPU !== false;
+    try {
+        if (localStorage.getItem("tantalum-backend") === "webgl") preferWebGPU = false;
+    } catch {
+        /* localStorage blocked (private mode, sandboxed iframe) — fall back to default. */
+    }
 
     if (preferWebGPU && "gpu" in navigator) {
         try {

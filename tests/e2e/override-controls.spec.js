@@ -18,7 +18,7 @@ test("override toggle swaps controls and applies custom values", async ({ page }
 
     await expect(page.locator("#resolution-width")).toHaveValue("820");
     await expect(page.locator("#resolution-height")).toHaveValue("461");
-    await expect(page.locator("#path-length-input")).toHaveValue("12");
+    await expect(page.locator("#path-length-input")).toHaveValue("11");
     await expect(page.locator("#sample-count-input")).toHaveValue("1000000");
 
     await page.locator("#resolution-width").fill("640");
