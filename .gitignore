@@ -4,3 +4,4 @@ dist/
 .playwright/
 test-results/
 playwright-report/
+.codex
