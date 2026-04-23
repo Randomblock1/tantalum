@@ -103,7 +103,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         entries: [
             { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
             { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
-            { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: { type: "non-filtering" } },
+            { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
         ],
     });
     const composePipeline = device.createRenderPipeline({
@@ -113,8 +113,6 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         primitive: { topology: "triangle-list" },
     });
     programs.set("composite", { kind: "composite", pipeline: composePipeline, layout: composeLayout });
-
-    const composeSampler = device.createSampler({ magFilter: "nearest", minFilter: "nearest" });
 
     const rayModule = loadShaderModule("ray");
     const rayLayout = device.createBindGroupLayout({
@@ -234,7 +232,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const composeUBuf = device.createBuffer({
-        size: 32,
+        size: 16,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -294,13 +292,13 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
             entries: [{ binding: 0, resource: src.view }],
         }),
     );
-    const getComposeBindGroup = createUnaryCache((screen) =>
+    const getComposeBindGroup = createBinaryCache((screen, preview) =>
         device.createBindGroup({
             layout: composeLayout,
             entries: [
                 { binding: 0, resource: { buffer: composeUBuf } },
                 { binding: 1, resource: screen.view },
-                { binding: 2, resource: composeSampler },
+                { binding: 2, resource: preview.view },
             ],
         }),
     );
@@ -407,8 +405,41 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         canvas.height = h;
     }
 
+    let lastPerfSnapshot = {
+        backend: caps.kind,
+        submits: 0,
+        computePasses: 0,
+        renderPasses: 0,
+        blits: 0,
+        composites: 0,
+    };
+
     function beginFrame() {
         const encoder = device.createCommandEncoder();
+        const frameStats = {
+            backend: caps.kind,
+            submits: 0,
+            computePasses: 0,
+            renderPasses: 0,
+            blits: 0,
+            composites: 0,
+        };
+        let computePass = null;
+
+        function endComputePass() {
+            if (!computePass) return;
+            computePass.end();
+            computePass = null;
+        }
+
+        function getComputePass() {
+            if (!computePass) {
+                computePass = encoder.beginComputePass();
+                frameStats.computePasses += 1;
+            }
+            return computePass;
+        }
+
         return {
             updateRayState({ program, stateIn, stateOut, uniforms, raySize, activeRows }) {
                 const isInit = program.kind === "init";
@@ -425,11 +456,10 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                     initScratchU32[9] = activeRows;
                     device.queue.writeBuffer(initUBuf, 0, initScratch);
                     const group = getInitBindGroup(stateIn, stateOut, currentSpectrumHandle());
-                    const pass = encoder.beginComputePass();
+                    const pass = getComputePass();
                     pass.setPipeline(program.pipeline);
                     pass.setBindGroup(0, group);
                     pass.dispatchWorkgroups(Math.ceil(raySize / 8), Math.ceil(activeRows / 8));
-                    pass.end();
                     return;
                 }
                 /* trace */
@@ -439,19 +469,20 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 traceScratchU32[3] = 0;
                 device.queue.writeBuffer(traceUBuf, 0, traceScratch);
                 const group = getTraceBindGroup(stateIn, stateOut);
-                const pass = encoder.beginComputePass();
+                const pass = getComputePass();
                 pass.setPipeline(program.pipeline);
                 pass.setBindGroup(0, group);
                 pass.dispatchWorkgroups(Math.ceil(raySize / 8), Math.ceil(activeRows / 8));
-                pass.end();
             },
             splatRays({ program, waveBuffer, stateA, stateB, raysVbo, raysDrawCount, aspect, clearFirst }) {
+                endComputePass();
                 splatScratchF32[0] = aspect;
                 splatScratchU32[1] = stateA.size;
                 splatScratchU32[2] = 0;
                 splatScratchU32[3] = 0;
                 device.queue.writeBuffer(splatUBuf, 0, splatScratch);
                 const group = getSplatBindGroup(stateA, stateB);
+                frameStats.renderPasses += 1;
                 const pass = encoder.beginRenderPass({
                     colorAttachments: [
                         {
@@ -469,7 +500,10 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 pass.end();
             },
             blit({ program, src, dst, additive }) {
+                endComputePass();
                 const group = getBlitBindGroup(src);
+                frameStats.renderPasses += 1;
+                frameStats.blits += 1;
                 const pass = encoder.beginRenderPass({
                     colorAttachments: [
                         {
@@ -486,6 +520,8 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 pass.end();
             },
             clearTexture(target) {
+                endComputePass();
+                frameStats.renderPasses += 1;
                 const pass = encoder.beginRenderPass({
                     colorAttachments: [
                         {
@@ -498,10 +534,14 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 });
                 pass.end();
             },
-            composite({ program, screenBuffer, exposure }) {
+            composite({ program, screenBuffer, exposure, previewBuffer }) {
+                endComputePass();
                 composeScratchF32[0] = exposure;
+                composeScratchF32[1] = previewBuffer ? 1.0 : 0.0;
                 device.queue.writeBuffer(composeUBuf, 0, composeScratch);
-                const group = getComposeBindGroup(screenBuffer);
+                const group = getComposeBindGroup(screenBuffer, previewBuffer || screenBuffer);
+                frameStats.renderPasses += 1;
+                frameStats.composites += 1;
                 const pass = encoder.beginRenderPass({
                     colorAttachments: [
                         {
@@ -518,6 +558,9 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 pass.end();
             },
             submit() {
+                endComputePass();
+                frameStats.submits = 1;
+                lastPerfSnapshot = frameStats;
                 device.queue.submit([encoder.finish()]);
             },
         };
@@ -534,5 +577,8 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         uploadSpectrumResources,
         resize,
         beginFrame,
+        getPerfSnapshot() {
+            return { ...lastPerfSnapshot };
+        },
     };
 }

@@ -49,6 +49,7 @@
  * @typedef {Object} CompositeArgs
  * @property {RenderTexture} screenBuffer
  * @property {number} exposure
+ * @property {RenderTexture | undefined} [previewBuffer]
  */
 
 /**
@@ -73,6 +74,7 @@
  * @property {(spec: {spectrum: Float32Array, emission: Float32Array, icdf: Float32Array, pdf: Float32Array}) => SpectrumResources} uploadSpectrumResources
  * @property {(w: number, h: number) => void} resize    - Called when canvas size changes.
  * @property {() => Frame} beginFrame
+ * @property {() => Object | null} [getPerfSnapshot]
  */
 
 /**
@@ -95,5 +97,6 @@ export function makeNullBackend() {
         uploadSpectrumResources: fail("uploadSpectrumResources"),
         resize: fail("resize"),
         beginFrame: fail("beginFrame"),
+        getPerfSnapshot: () => null,
     };
 }

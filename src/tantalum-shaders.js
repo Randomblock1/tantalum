@@ -125,15 +125,18 @@ window.Shaders = {
         '#include "preamble"\n\n'                                                          +
 
         'uniform sampler2D Frame;\n'                                                       +
-        'uniform float Exposure;\n\n'                                                      +
+        'uniform sampler2D PreviewFrame;\n'                                                +
+        'uniform float Exposure;\n'                                                        +
+        'uniform float PreviewMix;\n\n'                                                    +
 
         'in vec2 vTexCoord;\n\n'                                                           +
 
         'out vec4 outColor;\n\n'                                                           +
 
         'void main() {\n'                                                                  +
-        '    outColor = vec4(pow(texture(Frame, vTexCoord).rgb*Exposure, vec3(1.0/2.2)), ' +
-                                                                               '1.0);\n'   +
+        '    vec3 rgb = texture(Frame, vTexCoord).rgb + texture(PreviewFrame, vTexCoord).' +
+                                                                   'rgb * PreviewMix;\n'   +
+        '    outColor = vec4(pow(rgb * Exposure, vec3(1.0 / 2.2)), 1.0);\n'                +
         '}\n',
 
     'compose-vert':
@@ -462,6 +465,12 @@ window.Shaders = {
         'out vec3 vColor;\n\n'                                                             +
 
         'void main() {\n'                                                                  +
+        '    vec3 rgb = texture(RgbData, TexCoord.xy).rgb;\n'                              +
+        '    if (all(equal(rgb, vec3(0.0)))) {\n'                                          +
+        '        gl_Position = vec4(2.0, 2.0, 0.0, 1.0);\n'                                +
+        '        vColor = vec3(0.0);\n'                                                    +
+        '        return;\n'                                                                +
+        '    }\n'                                                                          +
         '    vec2 posA = texture(PosDataA, TexCoord.xy).xy;\n'                             +
         '    vec2 posB = texture(PosDataB, TexCoord.xy).xy;\n'                             +
         '    vec2 pos = mix(posA, posB, TexCoord.z);\n'                                    +
@@ -470,7 +479,7 @@ window.Shaders = {
                                                                            '.414214);\n\n' +
 
         '    gl_Position = vec4(pos.x/Aspect, pos.y, 0.0, 1.0);\n'                         +
-        '    vColor = texture(RgbData, TexCoord.xy).rgb*biasCorrection;\n'                 +
+        '    vColor = rgb*biasCorrection;\n'                                               +
         '}\n',
 
     'scene1':
@@ -717,10 +726,21 @@ window.Shaders = {
         '    return Ray(pos, normalize(dir), 1.0/dir, sign(dir));\n'                       +
         '}\n\n'                                                                            +
 
+        'bool isRayAlive(vec4 rgbLambda) {\n'                                              +
+        '    return any(notEqual(rgbLambda.rgb, vec3(0.0)));\n'                            +
+        '}\n\n'                                                                            +
+
         'void main() {\n'                                                                  +
         '    vec4 posDir    = texture(PosData, vTexCoord);\n'                              +
         '    vec4 state     = texture(RngData, vTexCoord);\n'                              +
         '    vec4 rgbLambda = texture(RgbData, vTexCoord);\n\n'                            +
+
+        '    if (!isRayAlive(rgbLambda)) {\n'                                              +
+        '        oPosDir = posDir;\n'                                                      +
+        '        oRng = state;\n'                                                          +
+        '        oRgbLambda = rgbLambda;\n'                                                +
+        '        return;\n'                                                                +
+        '    }\n\n'                                                                        +
 
         '    Ray ray = unpackRay(posDir);\n'                                               +
         '    Intersection isect;\n'                                                        +

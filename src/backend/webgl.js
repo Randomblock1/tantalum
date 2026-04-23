@@ -34,6 +34,14 @@ export function makeWebGLBackend(canvas) {
     gl.blendFunc(gl.ONE, gl.ONE);
 
     const caps = { kind: "webgl2", hasFloat32Blend: true, hasLinearFloat: true };
+    let lastPerfSnapshot = {
+        backend: caps.kind,
+        submits: 0,
+        computePasses: 0,
+        renderPasses: 0,
+        blits: 0,
+        composites: 0,
+    };
 
     function createTexture(w, h, channels, isFloat, isLinear, data) {
         return new tgl.Texture(w, h, channels, isFloat, isLinear, true, data);
@@ -155,8 +163,18 @@ export function makeWebGLBackend(canvas) {
     }
 
     function beginFrame() {
+        const frameStats = {
+            backend: caps.kind,
+            submits: 0,
+            computePasses: 0,
+            renderPasses: 0,
+            blits: 0,
+            composites: 0,
+        };
+
         return {
             updateRayState({ program, stateIn, stateOut, uniforms, textureBindings, raySize, activeRows }) {
+                frameStats.renderPasses += 1;
                 fbo.bind();
                 gl.viewport(0, 0, raySize, raySize);
                 gl.scissor(0, 0, raySize, activeRows);
@@ -194,6 +212,7 @@ export function makeWebGLBackend(canvas) {
                 gl.disable(gl.SCISSOR_TEST);
             },
             splatRays({ program, waveBuffer, stateA, stateB, raysVbo, raysDrawCount, aspect, clearFirst }) {
+                frameStats.renderPasses += 1;
                 fbo.bind();
                 fbo.drawBuffers(1);
                 fbo.attachTexture(waveBuffer.tex, 0);
@@ -215,6 +234,8 @@ export function makeWebGLBackend(canvas) {
                 gl.disable(gl.BLEND);
             },
             blit({ program, src, dst, additive }) {
+                frameStats.renderPasses += 1;
+                frameStats.blits += 1;
                 fbo.bind();
                 fbo.drawBuffers(1);
                 fbo.attachTexture(dst.tex, 0);
@@ -228,23 +249,30 @@ export function makeWebGLBackend(canvas) {
                 if (additive) gl.disable(gl.BLEND);
             },
             clearTexture(target) {
+                frameStats.renderPasses += 1;
                 fbo.bind();
                 fbo.drawBuffers(1);
                 fbo.attachTexture(target.tex, 0);
                 gl.viewport(0, 0, target.width, target.height);
                 gl.clear(gl.COLOR_BUFFER_BIT);
             },
-            composite({ program, screenBuffer, exposure }) {
+            composite({ program, screenBuffer, exposure, previewBuffer }) {
+                frameStats.renderPasses += 1;
+                frameStats.composites += 1;
                 fbo.unbind();
                 gl.viewport(0, 0, canvas.width, canvas.height);
                 program.bind();
                 screenBuffer.tex.bind(0);
+                (previewBuffer ? previewBuffer.tex : screenBuffer.tex).bind(1);
                 program.uniformTexture("Frame", screenBuffer.tex);
+                program.uniformTexture("PreviewFrame", previewBuffer ? previewBuffer.tex : screenBuffer.tex);
                 program.uniformF("Exposure", exposure);
+                program.uniformF("PreviewMix", previewBuffer ? 1.0 : 0.0);
                 drawQuad(frameState.quadVbo, program);
             },
             submit() {
-                /* WebGL dispatches eagerly; nothing to do. */
+                frameStats.submits = 1;
+                lastPerfSnapshot = frameStats;
             },
         };
     }
@@ -265,6 +293,9 @@ export function makeWebGLBackend(canvas) {
         uploadSpectrumResources,
         resize,
         beginFrame,
+        getPerfSnapshot() {
+            return { ...lastPerfSnapshot };
+        },
     };
 }
 

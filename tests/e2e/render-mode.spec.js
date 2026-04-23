@@ -26,3 +26,24 @@ test("default throughput scheduler still supports PNG download", async ({ page }
 
     await expect(download.suggestedFilename()).toMatch(/Tantalum\.png$/);
 });
+
+test("debug perf snapshot exposes per-frame batching counters", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator(".warning-box")).toHaveCount(0, { timeout: 15_000 });
+
+    const snapshot = await page.evaluate(async () => {
+        for (let i = 0; i < 100; ++i) {
+            const debugApi = window.__tantalumDebug;
+            const perf = debugApi && typeof debugApi.getPerfSnapshot === "function" ? debugApi.getPerfSnapshot() : null;
+            if (perf && perf.traceSteps > 0 && perf.submits > 0) return perf;
+            await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        return null;
+    });
+
+    expect(snapshot).not.toBeNull();
+    expect(snapshot.backend).toBe("webgl2");
+    expect(snapshot.traceSteps).toBeGreaterThan(0);
+    expect(snapshot.submits).toBeGreaterThan(0);
+    expect(snapshot.renderPasses).toBeGreaterThan(0);
+});

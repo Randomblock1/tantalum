@@ -42,6 +42,7 @@
         this.resetActiveBlock();
         this.rayCount = this.raySize * this.raySize;
         this.currentState = 0;
+        this.unpresentedTraceSteps = 0;
         this.rayStates = [backend.createRayState(this.raySize), backend.createRayState(this.raySize)];
 
         this.rayVbo = backend.createRayLineGeometry(this.raySize);
@@ -230,6 +231,7 @@
         this.raysTraced = 0;
         this.samplesTraced = 0;
         this.pathLength = 0;
+        this.unpresentedTraceSteps = 0;
         this.elapsedTimes = [];
 
         var frame = this.backend.beginFrame();
@@ -315,13 +317,23 @@
         this.present();
     };
 
-    Renderer.prototype.present = function () {
-        var frame = this.backend.beginFrame();
+    Renderer.prototype.previewBuffer = function () {
+        return this.wavesTraced == 0 && this.pathLength > 0 ? this.waveBuffer : undefined;
+    };
+
+    Renderer.prototype.encodePresent = function (frame) {
         frame.composite({
             program: this.compositeProgram,
             screenBuffer: this.screenBuffer,
             exposure: this.width / Math.max(this.samplesTraced, this.raySize * this.activeBlock),
+            previewBuffer: this.previewBuffer(),
         });
+    };
+
+    Renderer.prototype.present = function () {
+        var frame = this.backend.beginFrame();
+        this.encodePresent(frame);
+        this.unpresentedTraceSteps = 0;
         frame.submit();
     };
 
@@ -333,19 +345,17 @@
             return deadline && typeof deadline.timeRemaining === "function" ? deadline.timeRemaining() > 2 : steps == 0;
         };
         while (steps < maxSteps && hasBudget() && !this.finished()) {
-            this.render(performance.now(), true);
             steps++;
         }
+        if (steps > 0) this.renderBatch(performance.now(), { maxSteps: steps, forcePresent: true });
     };
 
-    Renderer.prototype.traceStep = function (timestamp) {
+    Renderer.prototype.encodeTraceStep = function (frame, timestamp) {
         if (timestamp === undefined || timestamp === null) timestamp = performance.now();
         this.needsReset = true;
 
         var current = this.currentState;
         var next = 1 - current;
-
-        var frame = this.backend.beginFrame();
 
         if (this.pathLength == 0) {
             frame.updateRayState({
@@ -398,7 +408,7 @@
         this.raysTraced += this.raySize * this.activeBlock;
         this.pathLength += 1;
 
-        if (this.pathLength == this.maxPathLength || this.wavesTraced == 0) {
+        if (this.pathLength == this.maxPathLength) {
             frame.blit({
                 program: this.passProgram,
                 src: this.waveBuffer,
@@ -406,20 +416,61 @@
                 additive: true,
             });
 
-            if (this.pathLength == this.maxPathLength) {
-                this.samplesTraced += this.raySize * this.activeBlock;
-                this.wavesTraced += 1;
-                this.pathLength = 0;
-            }
+            this.samplesTraced += this.raySize * this.activeBlock;
+            this.wavesTraced += 1;
+            this.pathLength = 0;
         }
-        frame.submit();
 
         this.currentState = next;
     };
 
+    Renderer.prototype.traceStep = function (timestamp) {
+        var frame = this.backend.beginFrame();
+        this.encodeTraceStep(frame, timestamp);
+        this.unpresentedTraceSteps += 1;
+        frame.submit();
+    };
+
+    Renderer.prototype.renderBatch = function (timestamp, opts) {
+        opts = opts || {};
+
+        var maxSteps = opts.maxSteps === undefined ? this.traceStepsPerFrame() : opts.maxSteps;
+        var forcePresent = opts.forcePresent === true;
+        var allowPresentWithoutTrace = opts.allowPresentWithoutTrace === true;
+        var steps = 0;
+        var frame = null;
+
+        while (steps < maxSteps && !this.finished()) {
+            if (!frame) frame = this.backend.beginFrame();
+            this.encodeTraceStep(frame, steps == 0 ? timestamp : performance.now());
+            this.unpresentedTraceSteps += 1;
+            steps++;
+        }
+
+        var shouldPresent = false;
+        if (steps > 0) {
+            shouldPresent = this.shouldPresentFrame(this.unpresentedTraceSteps, forcePresent);
+        } else if (forcePresent && allowPresentWithoutTrace) {
+            shouldPresent = true;
+        }
+
+        if (shouldPresent) {
+            if (!frame) frame = this.backend.beginFrame();
+            this.encodePresent(frame);
+            this.unpresentedTraceSteps = 0;
+        }
+
+        if (frame) frame.submit();
+
+        return {
+            traceSteps: steps,
+            presented: shouldPresent,
+            pendingPresent: this.unpresentedTraceSteps,
+        };
+    };
+
     Renderer.prototype.render = function (timestamp, _isPrewarm) {
-        this.traceStep(timestamp);
-        this.present();
+        this.renderBatch(timestamp, { maxSteps: 1, forcePresent: true, allowPresentWithoutTrace: true });
     };
 
     var SpectrumRenderer = function (canvas, spectrum) {

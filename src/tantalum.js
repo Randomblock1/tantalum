@@ -11,7 +11,17 @@ var Tantalum = function () {
     this._prewarmStarted = false;
     this._prewarmStartMs = 0;
     this._prewarmBudgetMs = 250;
-    this.unpresentedTraceSteps = 0;
+    this.lastPerfSnapshot = {
+        backend: null,
+        traceSteps: 0,
+        presented: false,
+        pendingPresent: 0,
+        submits: 0,
+        renderPasses: 0,
+        computePasses: 0,
+        blits: 0,
+        composites: 0,
+    };
 };
 
 Tantalum.prototype.init = async function () {
@@ -34,6 +44,7 @@ Tantalum.prototype.init = async function () {
     }
 
     this.controls.style.visibility = "visible";
+    this.installDebugApi();
     this.schedulePrewarm();
     window.requestAnimationFrame(this.boundRenderLoop);
 };
@@ -112,6 +123,20 @@ Tantalum.prototype.setupBackendIndicator = function () {
         window.location.reload();
     });
     el.appendChild(link);
+};
+
+Tantalum.prototype.installDebugApi = function () {
+    var self = this;
+    var debugApi = window.__tantalumDebug || {};
+    debugApi.getPerfSnapshot = function () {
+        var backendPerf =
+            self.backend && typeof self.backend.getPerfSnapshot === "function" ? self.backend.getPerfSnapshot() : null;
+        return Object.assign({}, self.lastPerfSnapshot, backendPerf || {}, {
+            backend: self.backend ? self.backend.caps.kind : null,
+            pendingPresent: self.renderer ? self.renderer.unpresentedTraceSteps : 0,
+        });
+    };
+    window.__tantalumDebug = debugApi;
 };
 
 Tantalum.prototype.setupUI = function () {
@@ -246,7 +271,6 @@ Tantalum.prototype.setupUI = function () {
     }
 
     renderer.onReset = function () {
-        self.unpresentedTraceSteps = 0;
         self._prewarmStarted = false;
     };
     new tui.ButtonGroup("scene-selector", true, sceneNames, selectScene);
@@ -427,32 +451,28 @@ Tantalum.prototype.fail = function (message) {
 Tantalum.prototype.renderLoop = function (timestamp) {
     window.requestAnimationFrame(this.boundRenderLoop);
 
-    if (!this.renderer.finished()) {
-        var stepsThisFrame = this.renderer.traceStepsPerFrame();
-        for (var i = 0; i < stepsThisFrame && !this.renderer.finished(); ++i) {
-            this.renderer.traceStep(i == 0 ? timestamp : performance.now());
-            this.unpresentedTraceSteps++;
+    var forcePresent = this.saveImageData;
+    var batch = {
+        traceSteps: 0,
+        presented: false,
+        pendingPresent: this.renderer.unpresentedTraceSteps,
+    };
 
-            if (this.renderer.shouldPresentFrame(this.unpresentedTraceSteps, false)) {
-                this.renderer.present();
-                this.unpresentedTraceSteps = 0;
-            }
-        }
+    if (!this.renderer.finished() || forcePresent) {
+        batch = this.renderer.renderBatch(timestamp, {
+            maxSteps: this.renderer.finished() ? 0 : this.renderer.traceStepsPerFrame(),
+            forcePresent: forcePresent,
+            allowPresentWithoutTrace: forcePresent && this.renderer.finished(),
+        });
     }
 
-    if (this.saveImageData) {
-        /* Ensure we redraw the image before we grab it. This is a strange one:
-           To save power the renderer stops doing anything after it finished
-           tracing rays, and the canvas keeps displaying the correct image
-           (as you would expect). However, when we get the canvas as a blob,
-           the results are garbage unless we rendered to it in that frame.
-           There's most likely some browser/ANGLE meddling happening here, but
-           in interest of my mental health I'm not going to dig deeper into this */
-        if (this.unpresentedTraceSteps > 0 || this.renderer.finished()) {
-            this.renderer.present();
-            this.unpresentedTraceSteps = 0;
-        }
+    var backendPerf =
+        this.backend && typeof this.backend.getPerfSnapshot === "function" ? this.backend.getPerfSnapshot() : null;
+    this.lastPerfSnapshot = Object.assign({}, this.lastPerfSnapshot, batch, backendPerf || {}, {
+        backend: this.backend.caps.kind,
+    });
 
+    if (this.saveImageData) {
         var fileName = "Tantalum";
         if (this.savedImages > 0) fileName += this.savedImages + 1;
         fileName += ".png";
