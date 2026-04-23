@@ -44,11 +44,19 @@ export function makeWebGLBackend(canvas) {
         gpuMsSplat: null,
         gpuMsBlit: null,
         gpuMsComposite: null,
+        gpuTimedTraceSteps: null,
+        gpuTimingAgeFrames: null,
         submits: 0,
         computePasses: 0,
+        computeDispatches: 0,
+        coalescedComputePasses: 0,
         renderPasses: 0,
+        drawCalls: 0,
         blits: 0,
         composites: 0,
+        directWaveCommits: 0,
+        uniformWrites: 0,
+        uniformBytes: 0,
     };
 
     function createTexture(w, h, channels, isFloat, isLinear, data) {
@@ -181,11 +189,19 @@ export function makeWebGLBackend(canvas) {
             gpuMsSplat: null,
             gpuMsBlit: null,
             gpuMsComposite: null,
+            gpuTimedTraceSteps: null,
+            gpuTimingAgeFrames: null,
             submits: 0,
             computePasses: 0,
+            computeDispatches: 0,
+            coalescedComputePasses: 0,
             renderPasses: 0,
+            drawCalls: 0,
             blits: 0,
             composites: 0,
+            directWaveCommits: 0,
+            uniformWrites: 0,
+            uniformBytes: 0,
         };
 
         return {
@@ -221,6 +237,7 @@ export function makeWebGLBackend(canvas) {
                 }
 
                 drawQuad(frameState.quadVbo, program);
+                frameStats.drawCalls += 1;
 
                 fbo.detachTexture(0);
                 fbo.detachTexture(1);
@@ -246,6 +263,7 @@ export function makeWebGLBackend(canvas) {
                 program.uniformTexture("RgbData", stateA.rgbTex);
                 program.uniformF("Aspect", aspect);
                 raysVbo.vbo.bind();
+                frameStats.drawCalls += 1;
                 raysVbo.vbo.draw(program, raysVbo.mode, raysDrawCount);
 
                 gl.disable(gl.BLEND);
@@ -262,6 +280,7 @@ export function makeWebGLBackend(canvas) {
                 program.bind();
                 src.tex.bind(0);
                 program.uniformTexture("Frame", src.tex);
+                frameStats.drawCalls += 1;
                 drawQuad(frameState.quadVbo, program);
                 if (additive) gl.disable(gl.BLEND);
             },
@@ -285,6 +304,7 @@ export function makeWebGLBackend(canvas) {
                 program.uniformTexture("PreviewFrame", previewBuffer ? previewBuffer.tex : screenBuffer.tex);
                 program.uniformF("Exposure", exposure);
                 program.uniformF("PreviewMix", previewBuffer ? 1.0 : 0.0);
+                frameStats.drawCalls += 1;
                 drawQuad(frameState.quadVbo, program);
             },
             submit() {

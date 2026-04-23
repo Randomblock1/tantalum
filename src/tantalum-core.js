@@ -194,12 +194,13 @@
     Renderer.prototype.traceStepsPerFrame = function () {
         if (this.backend.caps.kind == "webgpu" && typeof this.backend.getPerfSnapshot == "function") {
             var perf = this.backend.getPerfSnapshot();
-            if (perf && perf.traceSteps > 0 && perf.gpuMsTotal > 0) {
+            var timedTraceSteps = perf && perf.gpuTimedTraceSteps ? perf.gpuTimedTraceSteps : perf && perf.traceSteps;
+            if (perf && timedTraceSteps > 0 && perf.gpuMsTotal > 0) {
                 return Math.max(
                     1,
                     Math.min(
                         WEBGPU_MAX_TRACE_STEPS,
-                        Math.round((perf.traceSteps * WEBGPU_TARGET_FRAME_MS) / perf.gpuMsTotal),
+                        Math.round((timedTraceSteps * WEBGPU_TARGET_FRAME_MS) / perf.gpuMsTotal),
                     ),
                 );
             }
@@ -370,7 +371,8 @@
         if (steps > 0) this.renderBatch(performance.now(), { maxSteps: steps, forcePresent: true });
     };
 
-    Renderer.prototype.encodeTraceStep = function (frame, timestamp) {
+    Renderer.prototype.encodeTraceStep = function (frame, timestamp, opts) {
+        opts = opts || {};
         if (timestamp === undefined || timestamp === null) timestamp = performance.now();
         this.needsReset = true;
 
@@ -414,21 +416,33 @@
             activeRows: this.activeBlock,
         });
 
-        frame.splatRays({
+        var splatArgs = {
             program: this.rayProgram,
             waveBuffer: this.waveBuffer,
+            screenBuffer: this.screenBuffer,
             stateA: this.rayStates[current],
             stateB: this.rayStates[next],
             raysVbo: this.rayVbo,
             raysDrawCount: this.raySize * this.activeBlock * 2,
             aspect: this.aspect,
-            clearFirst: this.pathLength == 0 || this.wavesTraced == 0,
-        });
+            clearFirst: opts.directAccumulation ? false : this.pathLength == 0 || this.wavesTraced == 0,
+        };
+
+        if (opts.directAccumulation) frame.splatRaysToAccumulation(splatArgs);
+        else frame.splatRays(splatArgs);
 
         this.raysTraced += this.raySize * this.activeBlock;
         this.pathLength += 1;
 
         if (this.pathLength == this.maxPathLength) {
+            if (opts.directAccumulation) {
+                this.samplesTraced += this.raySize * this.activeBlock;
+                this.wavesTraced += 1;
+                this.pathLength = 0;
+                this.currentState = next;
+                return;
+            }
+
             frame.blit({
                 program: this.passProgram,
                 src: this.waveBuffer,
@@ -459,10 +473,20 @@
         var allowPresentWithoutTrace = opts.allowPresentWithoutTrace === true;
         var steps = 0;
         var frame = null;
+        var directWaveActive = false;
 
         while (steps < maxSteps && !this.finished()) {
             if (!frame) frame = this.backend.beginFrame();
-            this.encodeTraceStep(frame, steps == 0 ? timestamp : performance.now());
+            if (this.pathLength == 0) {
+                directWaveActive =
+                    typeof frame.splatRaysToAccumulation == "function" &&
+                    this.backend.caps.kind == "webgpu" &&
+                    this.wavesTraced > 0 &&
+                    maxSteps - steps >= this.maxPathLength;
+            }
+            this.encodeTraceStep(frame, steps == 0 ? timestamp : performance.now(), {
+                directAccumulation: directWaveActive,
+            });
             this.unpresentedTraceSteps += 1;
             steps++;
         }

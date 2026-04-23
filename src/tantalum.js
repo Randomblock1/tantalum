@@ -23,11 +23,19 @@ var Tantalum = function () {
         gpuMsSplat: null,
         gpuMsBlit: null,
         gpuMsComposite: null,
+        gpuTimedTraceSteps: null,
+        gpuTimingAgeFrames: null,
         submits: 0,
         renderPasses: 0,
         computePasses: 0,
+        computeDispatches: 0,
+        coalescedComputePasses: 0,
+        drawCalls: 0,
         blits: 0,
         composites: 0,
+        directWaveCommits: 0,
+        uniformWrites: 0,
+        uniformBytes: 0,
     };
 };
 

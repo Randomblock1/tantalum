@@ -10,6 +10,7 @@ import { createBinaryCache, createTernaryCache, createUnaryCache } from "./webgp
 import { createManagedTextureHandle } from "./webgpu-managed-resource.js";
 import { applyLabeledGpuTimings, createPerfSnapshot } from "./webgpu-perf.js";
 import { createProceduralSplatDrawArgs, getRayStateLayout } from "./webgpu-ray-state.js";
+import { createUniformRing } from "./webgpu-uniform-ring.js";
 
 import preambleSrc from "../../shaders/wgsl/preamble.wgsl?raw";
 import composeSrc from "../../shaders/wgsl/compose.wgsl?raw";
@@ -33,6 +34,7 @@ import scene7Src from "../../shaders/wgsl/scene7.wgsl?raw";
 const SCENE_NAMES = ["scene1", "scene2", "scene3", "scene4", "scene5", "scene6", "scene7"];
 const TIMESTAMP_QUERY_CAPACITY = 256;
 const TIMESTAMP_SLOT_COUNT = 3;
+const DEFAULT_GPU_TIMING_SAMPLE_INTERVAL = 30;
 const NANOS_PER_MILLISECOND = 1_000_000;
 
 /**
@@ -52,6 +54,23 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         hasLinearFloat: adapter.features.has("float32-filterable"),
     };
     const supportsTimestampQuery = device.features.has("timestamp-query");
+    const timingConfig = (() => {
+        let mode = "sampled";
+        let sampleInterval = DEFAULT_GPU_TIMING_SAMPLE_INTERVAL;
+        try {
+            const stored = localStorage.getItem("tantalum-webgpu-timing");
+            if (stored === "off") mode = "off";
+            else if (stored === "detailed") {
+                mode = "detailed";
+                sampleInterval = 1;
+            } else if (stored && /^\d+$/.test(stored)) {
+                sampleInterval = Math.max(1, Number(stored));
+            }
+        } catch {
+            /* localStorage can be blocked in sandboxed contexts. */
+        }
+        return { mode, sampleInterval };
+    })();
 
     const wgsl = {
         preamble: preambleSrc,
@@ -116,13 +135,21 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
     const composePreviewModule = loadShaderModule("composePreview");
     const composeLayout = device.createBindGroupLayout({
         entries: [
-            { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+            {
+                binding: 0,
+                visibility: GPUShaderStage.FRAGMENT,
+                buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 16 },
+            },
             { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
         ],
     });
     const composePreviewLayout = device.createBindGroupLayout({
         entries: [
-            { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+            {
+                binding: 0,
+                visibility: GPUShaderStage.FRAGMENT,
+                buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 16 },
+            },
             { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
             { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
         ],
@@ -149,7 +176,11 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
     const rayModule = loadShaderModule("ray");
     const rayLayout = device.createBindGroupLayout({
         entries: [
-            { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
+            {
+                binding: 0,
+                visibility: GPUShaderStage.VERTEX,
+                buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 16 },
+            },
             { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
             { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
             { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
@@ -202,7 +233,11 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
     const initModule = loadShaderModule("init");
     const initLayout = device.createBindGroupLayout({
         entries: [
-            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+            {
+                binding: 0,
+                visibility: GPUShaderStage.COMPUTE,
+                buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 48 },
+            },
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
             { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
             { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
@@ -222,7 +257,11 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
 
     const traceLayout = device.createBindGroupLayout({
         entries: [
-            { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+            {
+                binding: 0,
+                visibility: GPUShaderStage.COMPUTE,
+                buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 16 },
+            },
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
             { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
             { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
@@ -240,23 +279,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         programs.set(`trace:${scene}`, { kind: "trace", pipeline: pipe, layout: traceLayout, scene });
     }
 
-    const initUBuf = device.createBuffer({
-        size: 48,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    const traceUBuf = device.createBuffer({
-        size: 16,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    const splatUBuf = device.createBuffer({
-        size: 16,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    const composeUBuf = device.createBuffer({
-        size: 16,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
+    const uniformRing = createUniformRing(device);
     const initScratch = new ArrayBuffer(48);
     const initScratchF32 = new Float32Array(initScratch);
     const initScratchU32 = new Uint32Array(initScratch);
@@ -272,7 +295,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         device.createBindGroup({
             layout: initLayout,
             entries: [
-                { binding: 0, resource: { buffer: initUBuf } },
+                { binding: 0, resource: { buffer: uniformRing.buffer, size: 48 } },
                 { binding: 1, resource: { buffer: stateIn.rngBuffer } },
                 { binding: 2, resource: { buffer: stateOut.posDirBuffer } },
                 { binding: 3, resource: { buffer: stateOut.rngBuffer } },
@@ -289,7 +312,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         device.createBindGroup({
             layout: traceLayout,
             entries: [
-                { binding: 0, resource: { buffer: traceUBuf } },
+                { binding: 0, resource: { buffer: uniformRing.buffer, size: 16 } },
                 { binding: 1, resource: { buffer: stateIn.posDirBuffer } },
                 { binding: 2, resource: { buffer: stateIn.rngBuffer } },
                 { binding: 3, resource: { buffer: stateIn.rgbLambdaBuffer } },
@@ -303,7 +326,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         device.createBindGroup({
             layout: rayLayout,
             entries: [
-                { binding: 0, resource: { buffer: splatUBuf } },
+                { binding: 0, resource: { buffer: uniformRing.buffer, size: 16 } },
                 { binding: 1, resource: { buffer: stateA.posDirBuffer } },
                 { binding: 2, resource: { buffer: stateA.rgbLambdaBuffer } },
                 { binding: 3, resource: { buffer: stateB.posDirBuffer } },
@@ -320,7 +343,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         device.createBindGroup({
             layout: composeLayout,
             entries: [
-                { binding: 0, resource: { buffer: composeUBuf } },
+                { binding: 0, resource: { buffer: uniformRing.buffer, size: 16 } },
                 { binding: 1, resource: screen.view },
             ],
         }),
@@ -329,7 +352,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         device.createBindGroup({
             layout: composePreviewLayout,
             entries: [
-                { binding: 0, resource: { buffer: composeUBuf } },
+                { binding: 0, resource: { buffer: uniformRing.buffer, size: 16 } },
                 { binding: 1, resource: screen.view },
                 { binding: 2, resource: preview.view },
             ],
@@ -478,14 +501,35 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         return null;
     }
 
+    let submittedFrameCount = 0;
+    let retainedGpuTiming = null;
     let lastPerfSnapshot = createPerfSnapshot(caps.kind, { gpuTimingSupported: supportsTimestampQuery });
 
+    function shouldSampleGpuTiming() {
+        if (!supportsTimestampQuery || timingConfig.mode === "off") return false;
+        if (timingConfig.mode === "detailed") return true;
+        return submittedFrameCount % timingConfig.sampleInterval === 0;
+    }
+
+    function withRetainedGpuTiming(stats) {
+        if (!retainedGpuTiming) return stats;
+        return {
+            ...stats,
+            ...retainedGpuTiming,
+            gpuTimingAgeFrames: submittedFrameCount - retainedGpuTiming.frameIndex,
+        };
+    }
+
     function beginFrame() {
+        uniformRing.reset();
         const encoder = device.createCommandEncoder();
         const frameStats = createPerfSnapshot(caps.kind, { gpuTimingSupported: supportsTimestampQuery });
-        const timingSlot = acquireTimingSlot();
+        const frameIndex = submittedFrameCount;
+        const detailedTiming = timingConfig.mode === "detailed";
+        const timingSlot = shouldSampleGpuTiming() ? acquireTimingSlot() : null;
         let queryCount = 0;
         const timingLabels = [];
+        let activeComputePass = null;
 
         function allocTimestampWrites(label) {
             if (!timingSlot || !label || queryCount + 2 > TIMESTAMP_QUERY_CAPACITY) return undefined;
@@ -500,14 +544,29 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         }
 
         function beginComputePass(label) {
+            if (activeComputePass) {
+                if (!detailedTiming) {
+                    frameStats.coalescedComputePasses += 1;
+                    return activeComputePass;
+                }
+                endComputePass();
+            }
             const descriptor = {};
-            const timestampWrites = allocTimestampWrites(label);
+            const timestampWrites = allocTimestampWrites(detailedTiming ? label : "trace");
             if (timestampWrites) descriptor.timestampWrites = timestampWrites;
             frameStats.computePasses += 1;
-            return encoder.beginComputePass(descriptor);
+            activeComputePass = encoder.beginComputePass(descriptor);
+            return activeComputePass;
+        }
+
+        function endComputePass() {
+            if (!activeComputePass) return;
+            activeComputePass.end();
+            activeComputePass = null;
         }
 
         function beginRenderPass(label, attachment) {
+            endComputePass();
             const descriptor = { colorAttachments: [attachment] };
             const timestampWrites = allocTimestampWrites(label);
             if (timestampWrites) descriptor.timestampWrites = timestampWrites;
@@ -516,7 +575,11 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         }
 
         function scheduleTimingReadback(submittedStats) {
-            if (!timingSlot || queryCount === 0) return;
+            if (!timingSlot) return;
+            if (queryCount === 0) {
+                timingSlot.busy = false;
+                return;
+            }
             const labelCopy = timingLabels.map((entry) => ({ ...entry }));
             device.queue.onSubmittedWorkDone().then(async () => {
                 let mapped = false;
@@ -532,9 +595,19 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                         ms: Math.max(0, Number(values[entry.end] - values[entry.begin])) / NANOS_PER_MILLISECOND,
                     }));
                     lastPerfSnapshot = applyLabeledGpuTimings(submittedStats, timings);
+                    retainedGpuTiming = {
+                        frameIndex,
+                        gpuMsTotal: lastPerfSnapshot.gpuMsTotal,
+                        gpuMsInit: lastPerfSnapshot.gpuMsInit,
+                        gpuMsTrace: lastPerfSnapshot.gpuMsTrace,
+                        gpuMsSplat: lastPerfSnapshot.gpuMsSplat,
+                        gpuMsBlit: lastPerfSnapshot.gpuMsBlit,
+                        gpuMsComposite: lastPerfSnapshot.gpuMsComposite,
+                        gpuTimedTraceSteps: lastPerfSnapshot.gpuTimedTraceSteps,
+                    };
                 } catch {
                     if (mapped) timingSlot.readBuffer.unmap();
-                    lastPerfSnapshot = submittedStats;
+                    lastPerfSnapshot = withRetainedGpuTiming(submittedStats);
                 } finally {
                     timingSlot.busy = false;
                 }
@@ -555,13 +628,13 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                     initScratchF32[7] = uniforms.EmitterPower;
                     initScratchU32[8] = raySize;
                     initScratchU32[9] = activeRows;
-                    device.queue.writeBuffer(initUBuf, 0, initScratch);
+                    const uniform = uniformRing.write(initScratch);
                     const group = getInitBindGroup(stateIn, stateOut, currentSpectrumHandle());
                     const pass = beginComputePass("init");
                     pass.setPipeline(program.pipeline);
-                    pass.setBindGroup(0, group);
+                    pass.setBindGroup(0, group, [uniform.offset]);
+                    frameStats.computeDispatches += 1;
                     pass.dispatchWorkgroups(Math.ceil(raySize / 8), Math.ceil(activeRows / 8));
-                    pass.end();
                     return;
                 }
 
@@ -569,18 +642,18 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 traceScratchU32[1] = activeRows;
                 traceScratchU32[2] = 0;
                 traceScratchU32[3] = 0;
-                device.queue.writeBuffer(traceUBuf, 0, traceScratch);
+                const uniform = uniformRing.write(traceScratch);
                 const group = getTraceBindGroup(stateIn, stateOut);
                 const pass = beginComputePass("trace");
                 pass.setPipeline(program.pipeline);
-                pass.setBindGroup(0, group);
+                pass.setBindGroup(0, group, [uniform.offset]);
+                frameStats.computeDispatches += 1;
                 pass.dispatchWorkgroups(Math.ceil(raySize / 8), Math.ceil(activeRows / 8));
-                pass.end();
             },
             splatRays({ program, waveBuffer, stateA, stateB, raysVbo, raysDrawCount, aspect, clearFirst }) {
                 void raysVbo;
                 splatScratchF32[0] = aspect;
-                device.queue.writeBuffer(splatUBuf, 0, splatScratch);
+                const uniform = uniformRing.write(splatScratch);
                 const group = getSplatBindGroup(stateA, stateB);
                 const drawArgs = createProceduralSplatDrawArgs(raysDrawCount);
                 frameStats.traceSteps += 1;
@@ -591,7 +664,28 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                     clearValue: { r: 0, g: 0, b: 0, a: 1 },
                 });
                 pass.setPipeline(program.pipeline);
-                pass.setBindGroup(0, group);
+                pass.setBindGroup(0, group, [uniform.offset]);
+                frameStats.drawCalls += 1;
+                pass.draw(drawArgs.vertexCount, drawArgs.instanceCount);
+                pass.end();
+            },
+            splatRaysToAccumulation({ program, screenBuffer, stateA, stateB, raysVbo, raysDrawCount, aspect }) {
+                void raysVbo;
+                splatScratchF32[0] = aspect;
+                const uniform = uniformRing.write(splatScratch);
+                const group = getSplatBindGroup(stateA, stateB);
+                const drawArgs = createProceduralSplatDrawArgs(raysDrawCount);
+                frameStats.traceSteps += 1;
+                frameStats.directWaveCommits += 1;
+                const pass = beginRenderPass("splat", {
+                    view: screenBuffer.view,
+                    loadOp: "load",
+                    storeOp: "store",
+                    clearValue: { r: 0, g: 0, b: 0, a: 1 },
+                });
+                pass.setPipeline(program.pipeline);
+                pass.setBindGroup(0, group, [uniform.offset]);
+                frameStats.drawCalls += 1;
                 pass.draw(drawArgs.vertexCount, drawArgs.instanceCount);
                 pass.end();
             },
@@ -606,6 +700,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 });
                 pass.setPipeline(program.pipeline);
                 pass.setBindGroup(0, group);
+                frameStats.drawCalls += 1;
                 pass.draw(3);
                 pass.end();
             },
@@ -621,7 +716,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
             composite({ program, screenBuffer, exposure, previewBuffer }) {
                 composeScratchF32[0] = exposure;
                 composeScratchF32[1] = previewBuffer ? 1.0 : 0.0;
-                device.queue.writeBuffer(composeUBuf, 0, composeScratch);
+                const uniform = uniformRing.write(composeScratch);
                 const activeProgram = previewBuffer ? programs.get("compositePreview") : program;
                 const group = previewBuffer
                     ? getComposePreviewBindGroup(screenBuffer, previewBuffer)
@@ -634,12 +729,17 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                     clearValue: { r: 0, g: 0, b: 0, a: 1 },
                 });
                 pass.setPipeline(activeProgram.pipeline);
-                pass.setBindGroup(0, group);
+                pass.setBindGroup(0, group, [uniform.offset]);
+                frameStats.drawCalls += 1;
                 pass.draw(3);
                 pass.end();
             },
             submit() {
+                endComputePass();
                 frameStats.submits = 1;
+                const uniformStats = uniformRing.flush(device.queue);
+                frameStats.uniformWrites += uniformStats.uniformWrites;
+                frameStats.uniformBytes += uniformStats.uniformBytes;
 
                 if (timingSlot && queryCount > 0) {
                     encoder.resolveQuerySet(timestampTracker.querySet, 0, queryCount, timingSlot.resolveBuffer, 0);
@@ -648,8 +748,9 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
 
                 const commandBuffer = encoder.finish();
                 const submittedStats = { ...frameStats };
-                lastPerfSnapshot = submittedStats;
+                lastPerfSnapshot = withRetainedGpuTiming(submittedStats);
                 device.queue.submit([commandBuffer]);
+                submittedFrameCount += 1;
                 scheduleTimingReadback(submittedStats);
             },
         };

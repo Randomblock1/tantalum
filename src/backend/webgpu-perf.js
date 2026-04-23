@@ -17,11 +17,19 @@ export function createPerfSnapshot(backend, overrides = {}) {
         gpuMsSplat: null,
         gpuMsBlit: null,
         gpuMsComposite: null,
+        gpuTimedTraceSteps: null,
+        gpuTimingAgeFrames: null,
         submits: 0,
         computePasses: 0,
+        computeDispatches: 0,
+        coalescedComputePasses: 0,
         renderPasses: 0,
+        drawCalls: 0,
         blits: 0,
         composites: 0,
+        directWaveCommits: 0,
+        uniformWrites: 0,
+        uniformBytes: 0,
         ...overrides,
     };
 }
@@ -35,6 +43,8 @@ export function applyLabeledGpuTimings(snapshot, timings) {
         gpuMsSplat: 0,
         gpuMsBlit: 0,
         gpuMsComposite: 0,
+        gpuTimedTraceSteps: snapshot.traceSteps,
+        gpuTimingAgeFrames: 0,
     };
 
     for (const sample of timings) {

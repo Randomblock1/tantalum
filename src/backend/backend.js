@@ -31,6 +31,7 @@
 /**
  * @typedef {Object} SplatRaysArgs
  * @property {RenderTexture} waveBuffer  - rgba32float target.
+ * @property {RenderTexture} [screenBuffer] - Optional rgba32float accumulation target for WebGPU direct commits.
  * @property {RayState} stateA
  * @property {RayState} stateB
  * @property {Vbo} raysVbo
@@ -56,6 +57,7 @@
  * @typedef {Object} Frame
  * @property {(args: UpdateRayStateArgs) => void} updateRayState
  * @property {(args: SplatRaysArgs) => void} splatRays
+ * @property {(args: SplatRaysArgs) => void} [splatRaysToAccumulation] - Optional WebGPU path that splats directly into screenBuffer.
  * @property {(args: BlitArgs) => void} blit
  * @property {(target: RenderTexture) => void} clearTexture
  * @property {(args: CompositeArgs) => void} composite

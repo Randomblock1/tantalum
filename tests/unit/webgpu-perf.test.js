@@ -14,11 +14,19 @@ test("createPerfSnapshot returns the full WebGPU perf schema", () => {
         gpuMsSplat: null,
         gpuMsBlit: null,
         gpuMsComposite: null,
+        gpuTimedTraceSteps: null,
+        gpuTimingAgeFrames: null,
         submits: 0,
         computePasses: 0,
+        computeDispatches: 0,
+        coalescedComputePasses: 0,
         renderPasses: 0,
+        drawCalls: 0,
         blits: 0,
         composites: 0,
+        directWaveCommits: 0,
+        uniformWrites: 0,
+        uniformBytes: 0,
     });
 });
 
@@ -40,4 +48,6 @@ test("applyLabeledGpuTimings aggregates repeated labels into stable perf fields"
     assert.equal(next.gpuMsBlit, 5.0);
     assert.equal(next.gpuMsComposite, 6.0);
     assert.equal(next.gpuMsTotal, 22.0);
+    assert.equal(next.gpuTimedTraceSteps, 4);
+    assert.equal(next.gpuTimingAgeFrames, 0);
 });

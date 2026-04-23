@@ -25,16 +25,18 @@ function loadRenderer() {
     return context.window.tcore.Renderer;
 }
 
-function createBackendRecorder(kind = "webgpu") {
+function createBackendRecorder(kind = "webgpu", opts = {}) {
     const counters = {
         beginFrame: 0,
         submit: 0,
         updateRayState: 0,
         splatRays: 0,
+        splatRaysToAccumulation: 0,
         blit: 0,
         clearTexture: 0,
         composite: 0,
         compositeArgs: [],
+        directSplatArgs: [],
         createRenderTexture: 0,
     };
 
@@ -48,11 +50,19 @@ function createBackendRecorder(kind = "webgpu") {
         gpuMsSplat: null,
         gpuMsBlit: null,
         gpuMsComposite: null,
+        gpuTimedTraceSteps: null,
+        gpuTimingAgeFrames: null,
         submits: 0,
         renderPasses: 0,
         computePasses: 0,
+        computeDispatches: 0,
+        coalescedComputePasses: 0,
+        drawCalls: 0,
         blits: 0,
         composites: 0,
+        directWaveCommits: 0,
+        uniformWrites: 0,
+        uniformBytes: 0,
     };
 
     const backend = {
@@ -91,7 +101,7 @@ function createBackendRecorder(kind = "webgpu") {
         },
         beginFrame() {
             counters.beginFrame++;
-            return {
+            const frame = {
                 updateRayState() {
                     counters.updateRayState++;
                 },
@@ -112,6 +122,13 @@ function createBackendRecorder(kind = "webgpu") {
                     counters.submit++;
                 },
             };
+            if (opts.directAccumulation) {
+                frame.splatRaysToAccumulation = (args) => {
+                    counters.splatRaysToAccumulation++;
+                    counters.directSplatArgs.push(args);
+                };
+            }
+            return frame;
         },
     };
 
@@ -129,10 +146,12 @@ function resetCounters(counters) {
     counters.submit = 0;
     counters.updateRayState = 0;
     counters.splatRays = 0;
+    counters.splatRaysToAccumulation = 0;
     counters.blit = 0;
     counters.clearTexture = 0;
     counters.composite = 0;
     counters.compositeArgs = [];
+    counters.directSplatArgs = [];
 }
 
 test("Renderer.renderBatch batches multiple trace steps into one backend frame", () => {
@@ -186,6 +205,53 @@ test("Renderer.renderBatch commits completed waves and composites without a prev
     assert.equal(counters.compositeArgs[0].previewBuffer, undefined);
 });
 
+test("Renderer.renderBatch can commit a completed non-preview WebGPU wave directly", () => {
+    const Renderer = loadRenderer();
+    const { backend, counters } = createBackendRecorder("webgpu", { directAccumulation: true });
+    const renderer = new Renderer(backend, 64, 64, ["scene1"]);
+
+    renderer.setMaxPathLength(2);
+    renderer.setMaxSampleCount(renderer.raySize * renderer.activeBlock * 10);
+    renderer.wavesTraced = 1;
+    renderer.samplesTraced = renderer.raySize * renderer.activeBlock;
+    resetCounters(counters);
+
+    const result = renderer.renderBatch(10, { maxSteps: 2, forcePresent: true });
+
+    assert.equal(result.traceSteps, 2);
+    assert.equal(result.presented, true);
+    assert.equal(renderer.pathLength, 0);
+    assert.equal(renderer.wavesTraced, 2);
+    assert.equal(counters.splatRays, 0);
+    assert.equal(counters.splatRaysToAccumulation, 2);
+    assert.equal(counters.blit, 0);
+    assert.equal(counters.directSplatArgs[0].screenBuffer, renderer.screenBuffer);
+    assert.equal(counters.directSplatArgs[1].screenBuffer, renderer.screenBuffer);
+    assert.equal(counters.compositeArgs[0].previewBuffer, undefined);
+});
+
+test("Renderer.renderBatch keeps partial WebGPU waves in the preview buffer", () => {
+    const Renderer = loadRenderer();
+    const { backend, counters } = createBackendRecorder("webgpu", { directAccumulation: true });
+    const renderer = new Renderer(backend, 64, 64, ["scene1"]);
+
+    renderer.setMaxPathLength(2);
+    renderer.setMaxSampleCount(renderer.raySize * renderer.activeBlock * 10);
+    renderer.wavesTraced = 1;
+    renderer.samplesTraced = renderer.raySize * renderer.activeBlock;
+    resetCounters(counters);
+
+    const result = renderer.renderBatch(10, { maxSteps: 1, forcePresent: true });
+
+    assert.equal(result.traceSteps, 1);
+    assert.equal(result.presented, true);
+    assert.equal(renderer.pathLength, 1);
+    assert.equal(counters.splatRays, 1);
+    assert.equal(counters.splatRaysToAccumulation, 0);
+    assert.equal(counters.blit, 0);
+    assert.equal(counters.compositeArgs[0].previewBuffer, undefined);
+});
+
 test("Renderer.traceStepsPerFrame scales WebGPU work to a GPU-time budget", () => {
     const Renderer = loadRenderer();
     const { backend, setPerfSnapshot } = createBackendRecorder("webgpu");
@@ -197,6 +263,16 @@ test("Renderer.traceStepsPerFrame scales WebGPU work to a GPU-time budget", () =
     assert.equal(renderer.traceStepsPerFrame(), 8);
 
     setPerfSnapshot({ traceSteps: 8, gpuMsTotal: 24 });
+    assert.equal(renderer.traceStepsPerFrame(), 4);
+});
+
+test("Renderer.traceStepsPerFrame uses sampled GPU trace step counts", () => {
+    const Renderer = loadRenderer();
+    const { backend, setPerfSnapshot } = createBackendRecorder("webgpu");
+    const renderer = new Renderer(backend, 64, 64, ["scene1"]);
+
+    setPerfSnapshot({ traceSteps: 1, gpuTimedTraceSteps: 8, gpuMsTotal: 24 });
+
     assert.equal(renderer.traceStepsPerFrame(), 4);
 });
 
