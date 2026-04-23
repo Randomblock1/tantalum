@@ -25,7 +25,7 @@ const legacyShared = {
 };
 
 export default [
-    { ignores: ["dist/**", "node_modules/**", "src/tantalum-shaders.js"] },
+    { ignores: [".worktrees/**", "dist/**", "node_modules/**", "src/tantalum-shaders.js"] },
     js.configs.recommended,
     {
         files: ["src/main.js", "src/backend/**/*.js"],
