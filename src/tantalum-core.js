@@ -2,6 +2,8 @@
     var LAMBDA_MIN = 360.0;
     var LAMBDA_MAX = 750.0;
     var TRACE_STEPS_PER_FRAME = 8;
+    var WEBGPU_TARGET_FRAME_MS = 12.0;
+    var WEBGPU_MAX_TRACE_STEPS = 32;
     var PRESENT_EVERY_TRACE_STEPS = 4;
 
     var Renderer = function (backend, width, height, scenes) {
@@ -190,6 +192,18 @@
     };
 
     Renderer.prototype.traceStepsPerFrame = function () {
+        if (this.backend.caps.kind == "webgpu" && typeof this.backend.getPerfSnapshot == "function") {
+            var perf = this.backend.getPerfSnapshot();
+            if (perf && perf.traceSteps > 0 && perf.gpuMsTotal > 0) {
+                return Math.max(
+                    1,
+                    Math.min(
+                        WEBGPU_MAX_TRACE_STEPS,
+                        Math.round((perf.traceSteps * WEBGPU_TARGET_FRAME_MS) / perf.gpuMsTotal),
+                    ),
+                );
+            }
+        }
         return TRACE_STEPS_PER_FRAME;
     };
 
@@ -207,12 +221,18 @@
             this.emitterPos[1] = ((this.emitterPos[1] + 0.5) * height) / this.height - 0.5;
         }
 
+        var sameSize = this.width == width && this.height == height && this.screenBuffer && this.waveBuffer;
+
         this.width = width;
         this.height = height;
         this.aspect = this.width / this.height;
 
-        this.screenBuffer = this.backend.createRenderTexture(this.width, this.height);
-        this.waveBuffer = this.backend.createRenderTexture(this.width, this.height);
+        if (!sameSize) {
+            if (this.screenBuffer && typeof this.screenBuffer.destroy == "function") this.screenBuffer.destroy();
+            if (this.waveBuffer && typeof this.waveBuffer.destroy == "function") this.waveBuffer.destroy();
+            this.screenBuffer = this.backend.createRenderTexture(this.width, this.height);
+            this.waveBuffer = this.backend.createRenderTexture(this.width, this.height);
+        }
 
         this.resetActiveBlock();
         this.reset();

@@ -35,6 +35,24 @@ function createBackendRecorder(kind = "webgpu") {
         clearTexture: 0,
         composite: 0,
         compositeArgs: [],
+        createRenderTexture: 0,
+    };
+
+    let perfSnapshot = {
+        backend: kind,
+        traceSteps: 0,
+        gpuTimingSupported: kind === "webgpu",
+        gpuMsTotal: null,
+        gpuMsInit: null,
+        gpuMsTrace: null,
+        gpuMsSplat: null,
+        gpuMsBlit: null,
+        gpuMsComposite: null,
+        submits: 0,
+        renderPasses: 0,
+        computePasses: 0,
+        blits: 0,
+        composites: 0,
     };
 
     const backend = {
@@ -44,6 +62,7 @@ function createBackendRecorder(kind = "webgpu") {
             return { size, buffer: {}, view: {} };
         },
         createRenderTexture(width, height) {
+            counters.createRenderTexture++;
             return { width, height, view: {}, tex: {} };
         },
         createQuadGeometry() {
@@ -67,6 +86,9 @@ function createBackendRecorder(kind = "webgpu") {
             };
         },
         resize() {},
+        getPerfSnapshot() {
+            return perfSnapshot;
+        },
         beginFrame() {
             counters.beginFrame++;
             return {
@@ -93,7 +115,13 @@ function createBackendRecorder(kind = "webgpu") {
         },
     };
 
-    return { backend, counters };
+    return {
+        backend,
+        counters,
+        setPerfSnapshot(next) {
+            perfSnapshot = { ...perfSnapshot, ...next };
+        },
+    };
 }
 
 function resetCounters(counters) {
@@ -156,4 +184,39 @@ test("Renderer.renderBatch commits completed waves and composites without a prev
     assert.equal(counters.blit, 1);
     assert.equal(counters.composite, 1);
     assert.equal(counters.compositeArgs[0].previewBuffer, undefined);
+});
+
+test("Renderer.traceStepsPerFrame scales WebGPU work to a GPU-time budget", () => {
+    const Renderer = loadRenderer();
+    const { backend, setPerfSnapshot } = createBackendRecorder("webgpu");
+    const renderer = new Renderer(backend, 64, 64, ["scene1"]);
+
+    assert.equal(renderer.traceStepsPerFrame(), 8);
+
+    setPerfSnapshot({ traceSteps: 4, gpuMsTotal: 6 });
+    assert.equal(renderer.traceStepsPerFrame(), 8);
+
+    setPerfSnapshot({ traceSteps: 8, gpuMsTotal: 24 });
+    assert.equal(renderer.traceStepsPerFrame(), 4);
+});
+
+test("Renderer.traceStepsPerFrame keeps the fixed schedule on WebGL", () => {
+    const Renderer = loadRenderer();
+    const { backend, setPerfSnapshot } = createBackendRecorder("webgl2");
+    const renderer = new Renderer(backend, 64, 64, ["scene1"]);
+
+    setPerfSnapshot({ traceSteps: 16, gpuMsTotal: 2 });
+    assert.equal(renderer.traceStepsPerFrame(), 8);
+});
+
+test("Renderer.changeResolution reuses existing render textures for identical sizes", () => {
+    const Renderer = loadRenderer();
+    const { backend, counters } = createBackendRecorder();
+    const renderer = new Renderer(backend, 64, 64, ["scene1"]);
+
+    assert.equal(counters.createRenderTexture, 2);
+
+    renderer.changeResolution(64, 64);
+
+    assert.equal(counters.createRenderTexture, 2);
 });

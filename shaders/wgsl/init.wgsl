@@ -12,13 +12,15 @@ struct InitUniforms {
 }
 
 @group(0) @binding(0) var<uniform> U: InitUniforms;
-@group(0) @binding(1) var<storage, read>       stateIn:  array<Ray>;
-@group(0) @binding(2) var<storage, read_write> stateOut: array<Ray>;
-@group(0) @binding(3) var spectrumTex: texture_2d<f32>;
-@group(0) @binding(4) var emissionTex: texture_2d<f32>;
-@group(0) @binding(5) var icdfTex:     texture_2d<f32>;
-@group(0) @binding(6) var pdfTex:      texture_2d<f32>;
-@group(0) @binding(7) var linearSmp:   sampler;
+@group(0) @binding(1) var<storage, read>       rngIn:        array<vec4f>;
+@group(0) @binding(2) var<storage, read_write> posDirOut:    array<vec4f>;
+@group(0) @binding(3) var<storage, read_write> rngOut:       array<vec4f>;
+@group(0) @binding(4) var<storage, read_write> rgbLambdaOut: array<vec4f>;
+@group(0) @binding(5) var spectrumTex: texture_2d<f32>;
+@group(0) @binding(6) var emissionTex: texture_2d<f32>;
+@group(0) @binding(7) var icdfTex:     texture_2d<f32>;
+@group(0) @binding(8) var pdfTex:      texture_2d<f32>;
+@group(0) @binding(9) var linearSmp:   sampler;
 
 fn sample1D(tex: texture_2d<f32>, smp: sampler, u: f32) -> vec4f {
     return textureSampleLevel(tex, smp, vec2f(u, 0.5), 0.0);
@@ -29,7 +31,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
     if (gid.x >= U.raySize || gid.y >= U.activeRows) { return; }
     let ix = gid.y * U.raySize + gid.x;
 
-    var state = stateIn[ix].rng;
+    var state = rngIn[ix];
 
     let theta = U.angularSpread.x + (rand(&state) - 0.5) * U.angularSpread.y;
     let dir   = vec2f(cos(theta), sin(theta));
@@ -44,5 +46,7 @@ fn cs(@builtin(global_invocation_id) gid: vec3u) {
             * sample1D(spectrumTex, linearSmp, spectrumOffset).rgb
             / sample1D(pdfTex,      linearSmp, spectrumOffset).r;
 
-    stateOut[ix] = Ray(vec4f(pos, dir), state, vec4f(rgb, lambda));
+    posDirOut[ix] = vec4f(pos, dir);
+    rngOut[ix] = state;
+    rgbLambdaOut[ix] = vec4f(rgb, lambda);
 }

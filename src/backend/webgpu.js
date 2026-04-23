@@ -1,16 +1,19 @@
 /**
  * WebGPU backend. Implements the Backend interface from ./backend.js using
- * storage buffers for ray state and compute shaders for init/trace.
+ * split storage buffers for ray state and compute shaders for init/trace.
  * This module is loaded lazily by ./select.js; consumers should not import
  * it directly unless they've already confirmed navigator.gpu support.
  */
 
 import { expandIncludes } from "./wgsl-loader.js";
 import { createBinaryCache, createTernaryCache, createUnaryCache } from "./webgpu-bind-group-cache.js";
+import { createManagedTextureHandle } from "./webgpu-managed-resource.js";
+import { applyLabeledGpuTimings, createPerfSnapshot } from "./webgpu-perf.js";
+import { createProceduralSplatDrawArgs, getRayStateLayout } from "./webgpu-ray-state.js";
 
-/* Shader sources — populated as phases C–E land real modules. */
 import preambleSrc from "../../shaders/wgsl/preamble.wgsl?raw";
 import composeSrc from "../../shaders/wgsl/compose.wgsl?raw";
+import composePreviewSrc from "../../shaders/wgsl/compose-preview.wgsl?raw";
 import raySrc from "../../shaders/wgsl/ray.wgsl?raw";
 import passSrc from "../../shaders/wgsl/pass.wgsl?raw";
 import initSrc from "../../shaders/wgsl/init.wgsl?raw";
@@ -26,6 +29,11 @@ import scene4Src from "../../shaders/wgsl/scene4.wgsl?raw";
 import scene5Src from "../../shaders/wgsl/scene5.wgsl?raw";
 import scene6Src from "../../shaders/wgsl/scene6.wgsl?raw";
 import scene7Src from "../../shaders/wgsl/scene7.wgsl?raw";
+
+const SCENE_NAMES = ["scene1", "scene2", "scene3", "scene4", "scene5", "scene6", "scene7"];
+const TIMESTAMP_QUERY_CAPACITY = 256;
+const TIMESTAMP_SLOT_COUNT = 3;
+const NANOS_PER_MILLISECOND = 1_000_000;
 
 /**
  * @param {HTMLCanvasElement} canvas
@@ -43,6 +51,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         hasFloat32Blend: adapter.features.has("float32-blendable"),
         hasLinearFloat: adapter.features.has("float32-filterable"),
     };
+    const supportsTimestampQuery = device.features.has("timestamp-query");
 
     const wgsl = {
         preamble: preambleSrc,
@@ -52,6 +61,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         csg: csgSrc,
         trace: traceSrc,
         compose: composeSrc,
+        composePreview: composePreviewSrc,
         pass: passSrc,
         ray: raySrc,
         init: initSrc,
@@ -72,21 +82,27 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
     });
 
     function make1DFloatTexture(data, channels) {
-        const format = channels === 4 ? "rgba32float" : "r32float";
+        const textureFormat = channels === 4 ? "rgba32float" : "r32float";
         const width = data.length / channels;
-        const tex = device.createTexture({
+        const texture = device.createTexture({
             size: { width, height: 1 },
-            format,
+            format: textureFormat,
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
         });
         const bytesPerPixel = channels * 4;
         device.queue.writeTexture(
-            { texture: tex },
+            { texture },
             data.buffer,
             { bytesPerRow: Math.max(256, width * bytesPerPixel) },
             { width, height: 1 },
         );
-        return { texture: tex, view: tex.createView(), width, channels };
+        return createManagedTextureHandle({
+            texture,
+            view: texture.createView(),
+            width,
+            height: 1,
+            channels,
+        });
     }
 
     function loadShaderModule(entry) {
@@ -94,12 +110,17 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         return device.createShaderModule({ code, label: entry });
     }
 
-    /* Programs exposed to the Renderer are opaque handles. Each carries
-       its kind so the frame methods can pick the right pipeline. */
     const programs = new Map();
 
     const composeModule = loadShaderModule("compose");
+    const composePreviewModule = loadShaderModule("composePreview");
     const composeLayout = device.createBindGroupLayout({
+        entries: [
+            { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
+            { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
+        ],
+    });
+    const composePreviewLayout = device.createBindGroupLayout({
         entries: [
             { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
             { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "unfilterable-float" } },
@@ -112,36 +133,31 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         fragment: { module: composeModule, entryPoint: "fs", targets: [{ format }] },
         primitive: { topology: "triangle-list" },
     });
+    const composePreviewPipeline = device.createRenderPipeline({
+        layout: device.createPipelineLayout({ bindGroupLayouts: [composePreviewLayout] }),
+        vertex: { module: composePreviewModule, entryPoint: "vs" },
+        fragment: { module: composePreviewModule, entryPoint: "fs", targets: [{ format }] },
+        primitive: { topology: "triangle-list" },
+    });
     programs.set("composite", { kind: "composite", pipeline: composePipeline, layout: composeLayout });
+    programs.set("compositePreview", {
+        kind: "compositePreview",
+        pipeline: composePreviewPipeline,
+        layout: composePreviewLayout,
+    });
 
     const rayModule = loadShaderModule("ray");
     const rayLayout = device.createBindGroupLayout({
         entries: [
             { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
-            {
-                binding: 1,
-                visibility: GPUShaderStage.VERTEX,
-                buffer: { type: "read-only-storage" },
-            },
-            {
-                binding: 2,
-                visibility: GPUShaderStage.VERTEX,
-                buffer: { type: "read-only-storage" },
-            },
+            { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
+            { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
+            { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
         ],
     });
     const rayPipeline = device.createRenderPipeline({
         layout: device.createPipelineLayout({ bindGroupLayouts: [rayLayout] }),
-        vertex: {
-            module: rayModule,
-            entryPoint: "vs",
-            buffers: [
-                {
-                    arrayStride: 12,
-                    attributes: [{ shaderLocation: 0, offset: 0, format: "float32x3" }],
-                },
-            ],
-        },
+        vertex: { module: rayModule, entryPoint: "vs" },
         fragment: {
             module: rayModule,
             entryPoint: "fs",
@@ -189,11 +205,13 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
             { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
-            { binding: 3, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float" } },
-            { binding: 4, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float" } },
+            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
             { binding: 5, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float" } },
             { binding: 6, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float" } },
-            { binding: 7, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
+            { binding: 7, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float" } },
+            { binding: 8, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: "float" } },
+            { binding: 9, visibility: GPUShaderStage.COMPUTE, sampler: { type: "filtering" } },
         ],
     });
     const initPipeline = device.createComputePipeline({
@@ -206,10 +224,14 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         entries: [
             { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
             { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
-            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+            { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+            { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "read-only-storage" } },
+            { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+            { binding: 5, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+            { binding: 6, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
         ],
     });
-    for (const scene of ["scene1", "scene2", "scene3", "scene4", "scene5", "scene6", "scene7"]) {
+    for (const scene of SCENE_NAMES) {
         const mod = loadShaderModule(scene);
         const pipe = device.createComputePipeline({
             layout: device.createPipelineLayout({ bindGroupLayouts: [traceLayout] }),
@@ -218,7 +240,6 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         programs.set(`trace:${scene}`, { kind: "trace", pipeline: pipe, layout: traceLayout, scene });
     }
 
-    /* Persistent uniform buffers — one per pass, reused every frame. */
     const initUBuf = device.createBuffer({
         size: 48,
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -236,7 +257,6 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    /* Scratch ArrayBuffers for packing uniforms without per-frame allocation. */
     const initScratch = new ArrayBuffer(48);
     const initScratchF32 = new Float32Array(initScratch);
     const initScratchU32 = new Uint32Array(initScratch);
@@ -244,25 +264,24 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
     const traceScratchU32 = new Uint32Array(traceScratch);
     const splatScratch = new ArrayBuffer(16);
     const splatScratchF32 = new Float32Array(splatScratch);
-    const splatScratchU32 = new Uint32Array(splatScratch);
     const composeScratch = new ArrayBuffer(16);
     const composeScratchF32 = new Float32Array(composeScratch);
 
-    /* Bind group caches keyed by object identity so replaced textures/buffers
-       can fall out of the cache naturally after resizes or resource rebuilds. */
     let spectrumHandle = null;
     const getInitBindGroup = createTernaryCache((stateIn, stateOut, spectrum) =>
         device.createBindGroup({
             layout: initLayout,
             entries: [
                 { binding: 0, resource: { buffer: initUBuf } },
-                { binding: 1, resource: { buffer: stateIn.buffer } },
-                { binding: 2, resource: { buffer: stateOut.buffer } },
-                { binding: 3, resource: spectrum.spectrum.view },
-                { binding: 4, resource: spectrum.emission.view },
-                { binding: 5, resource: spectrum.icdf.view },
-                { binding: 6, resource: spectrum.pdf.view },
-                { binding: 7, resource: linearSampler },
+                { binding: 1, resource: { buffer: stateIn.rngBuffer } },
+                { binding: 2, resource: { buffer: stateOut.posDirBuffer } },
+                { binding: 3, resource: { buffer: stateOut.rngBuffer } },
+                { binding: 4, resource: { buffer: stateOut.rgbLambdaBuffer } },
+                { binding: 5, resource: spectrum.spectrum.view },
+                { binding: 6, resource: spectrum.emission.view },
+                { binding: 7, resource: spectrum.icdf.view },
+                { binding: 8, resource: spectrum.pdf.view },
+                { binding: 9, resource: linearSampler },
             ],
         }),
     );
@@ -271,8 +290,12 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
             layout: traceLayout,
             entries: [
                 { binding: 0, resource: { buffer: traceUBuf } },
-                { binding: 1, resource: { buffer: stateIn.buffer } },
-                { binding: 2, resource: { buffer: stateOut.buffer } },
+                { binding: 1, resource: { buffer: stateIn.posDirBuffer } },
+                { binding: 2, resource: { buffer: stateIn.rngBuffer } },
+                { binding: 3, resource: { buffer: stateIn.rgbLambdaBuffer } },
+                { binding: 4, resource: { buffer: stateOut.posDirBuffer } },
+                { binding: 5, resource: { buffer: stateOut.rngBuffer } },
+                { binding: 6, resource: { buffer: stateOut.rgbLambdaBuffer } },
             ],
         }),
     );
@@ -281,8 +304,9 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
             layout: rayLayout,
             entries: [
                 { binding: 0, resource: { buffer: splatUBuf } },
-                { binding: 1, resource: { buffer: stateA.buffer } },
-                { binding: 2, resource: { buffer: stateB.buffer } },
+                { binding: 1, resource: { buffer: stateA.posDirBuffer } },
+                { binding: 2, resource: { buffer: stateA.rgbLambdaBuffer } },
+                { binding: 3, resource: { buffer: stateB.posDirBuffer } },
             ],
         }),
     );
@@ -292,9 +316,18 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
             entries: [{ binding: 0, resource: src.view }],
         }),
     );
-    const getComposeBindGroup = createBinaryCache((screen, preview) =>
+    const getComposeBindGroup = createUnaryCache((screen) =>
         device.createBindGroup({
             layout: composeLayout,
+            entries: [
+                { binding: 0, resource: { buffer: composeUBuf } },
+                { binding: 1, resource: screen.view },
+            ],
+        }),
+    );
+    const getComposePreviewBindGroup = createBinaryCache((screen, preview) =>
+        device.createBindGroup({
+            layout: composePreviewLayout,
             entries: [
                 { binding: 0, resource: { buffer: composeUBuf } },
                 { binding: 1, resource: screen.view },
@@ -310,75 +343,76 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         return spectrumHandle;
     }
 
-    function createRayState(size) {
-        const rayCount = size * size;
-        const byteLen = rayCount * 48;
-        /* Initialize pos=(0,0), dir=(cos θ, sin θ), rng ∈ [0, 4194167), rgb=0 */
-        const init = new Float32Array(rayCount * 12);
-        for (let i = 0; i < rayCount; ++i) {
-            const base = i * 12;
-            const theta = Math.random() * Math.PI * 2.0;
-            init[base + 0] = 0.0;
-            init[base + 1] = 0.0;
-            init[base + 2] = Math.cos(theta);
-            init[base + 3] = Math.sin(theta);
-            for (let t = 0; t < 4; ++t) init[base + 4 + t] = Math.random() * 4194167.0;
-            for (let t = 0; t < 4; ++t) init[base + 8 + t] = 0.0;
-        }
-        const make = () => {
-            const b = device.createBuffer({
-                size: byteLen,
-                usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-                mappedAtCreation: true,
-            });
-            new Float32Array(b.getMappedRange()).set(init);
-            b.unmap();
-            return b;
-        };
-        return { size, posDir: null, buffer: make(), byteLen };
+    function createStorageBuffer(size, data) {
+        const buffer = device.createBuffer({
+            size,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+            mappedAtCreation: true,
+        });
+        new Float32Array(buffer.getMappedRange()).set(data);
+        buffer.unmap();
+        return buffer;
     }
+
+    function createRayState(size) {
+        const layout = getRayStateLayout(size);
+        const posDirData = new Float32Array(layout.rayCount * 4);
+        const rngData = new Float32Array(layout.rayCount * 4);
+        const rgbLambdaData = new Float32Array(layout.rayCount * 4);
+        for (let i = 0; i < layout.rayCount; ++i) {
+            const theta = Math.random() * Math.PI * 2.0;
+            posDirData[i * 4 + 0] = 0.0;
+            posDirData[i * 4 + 1] = 0.0;
+            posDirData[i * 4 + 2] = Math.cos(theta);
+            posDirData[i * 4 + 3] = Math.sin(theta);
+            for (let t = 0; t < 4; ++t) rngData[i * 4 + t] = Math.random() * 4194167.0;
+        }
+        return {
+            size,
+            posDirBuffer: createStorageBuffer(layout.posDirByteLength, posDirData),
+            rngBuffer: createStorageBuffer(layout.rngByteLength, rngData),
+            rgbLambdaBuffer: createStorageBuffer(layout.rgbLambdaByteLength, rgbLambdaData),
+            byteLen: layout.posDirByteLength + layout.rngByteLength + layout.rgbLambdaByteLength,
+        };
+    }
+
     function createRenderTexture(w, h) {
-        const tex = device.createTexture({
+        const texture = device.createTexture({
             size: { width: w, height: h },
             format: "rgba32float",
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST,
         });
-        return { width: w, height: h, texture: tex, view: tex.createView() };
-    }
-    function createQuadGeometry() {
-        return { kind: "quad" }; /* Compose pass uses vertex_index, no buffer needed. */
-    }
-    function createRayLineGeometry(raySize) {
-        const count = raySize * raySize;
-        const data = new Float32Array(count * 2 * 3);
-        for (let i = 0; i < count; ++i) {
-            const u = ((i % raySize) + 0.5) / raySize;
-            const v = (Math.floor(i / raySize) + 0.5) / raySize;
-            data[i * 6 + 0] = data[i * 6 + 3] = u;
-            data[i * 6 + 1] = data[i * 6 + 4] = v;
-            data[i * 6 + 2] = 0.0;
-            data[i * 6 + 5] = 1.0;
-        }
-        const buf = device.createBuffer({
-            size: data.byteLength,
-            usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-            mappedAtCreation: true,
+        return createManagedTextureHandle({
+            texture,
+            view: texture.createView(),
+            width: w,
+            height: h,
         });
-        new Float32Array(buf.getMappedRange()).set(data);
-        buf.unmap();
-        return { buffer: buf, stride: 12, count: count * 2 };
     }
+
+    function createQuadGeometry() {
+        return { kind: "quad" };
+    }
+
+    function createRayLineGeometry(raySize) {
+        return { kind: "procedural-lines", count: raySize * raySize * 2 };
+    }
+
     function loadProgram(kind, name) {
         const key = kind === "trace" ? `trace:${name}` : kind;
-        const p = programs.get(key);
-        if (!p) throw new Error(`WebGPU: program ${kind}/${name} not wired`);
-        return p;
+        const program = programs.get(key);
+        if (!program) throw new Error(`WebGPU: program ${kind}/${name} not wired`);
+        return program;
     }
+
     function uploadSpectrumResources(spec) {
+        if (spectrumHandle && typeof spectrumHandle.destroy == "function") spectrumHandle.destroy();
+
         const spectrum = make1DFloatTexture(spec.spectrum, 4);
         const emission = make1DFloatTexture(spec.emission, 1);
         const icdf = make1DFloatTexture(spec.icdf, 1);
         const pdf = make1DFloatTexture(spec.pdf, 1);
+
         function rewrite(handle, data) {
             device.queue.writeTexture(
                 { texture: handle.texture },
@@ -387,6 +421,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 { width: handle.width, height: 1 },
             );
         }
+
         const handle = {
             spectrum,
             emission,
@@ -396,48 +431,114 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
             updateEmission: (data) => rewrite(emission, data),
             updateIcdf: (data) => rewrite(icdf, data),
             updatePdf: (data) => rewrite(pdf, data),
+            destroy() {
+                spectrum.destroy();
+                emission.destroy();
+                icdf.destroy();
+                pdf.destroy();
+            },
         };
         spectrumHandle = handle;
         return handle;
     }
+
     function resize(w, h) {
         canvas.width = w;
         canvas.height = h;
     }
 
-    let lastPerfSnapshot = {
-        backend: caps.kind,
-        submits: 0,
-        computePasses: 0,
-        renderPasses: 0,
-        blits: 0,
-        composites: 0,
-    };
+    const timestampTracker = supportsTimestampQuery
+        ? {
+              querySet: device.createQuerySet({ type: "timestamp", count: TIMESTAMP_QUERY_CAPACITY }),
+              slotIndex: 0,
+              slots: Array.from({ length: TIMESTAMP_SLOT_COUNT }, () => ({
+                  resolveBuffer: device.createBuffer({
+                      size: TIMESTAMP_QUERY_CAPACITY * 8,
+                      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+                  }),
+                  readBuffer: device.createBuffer({
+                      size: TIMESTAMP_QUERY_CAPACITY * 8,
+                      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+                  }),
+                  busy: false,
+              })),
+          }
+        : null;
+
+    function acquireTimingSlot() {
+        if (!timestampTracker) return null;
+        for (let i = 0; i < timestampTracker.slots.length; ++i) {
+            const slot = timestampTracker.slots[timestampTracker.slotIndex];
+            timestampTracker.slotIndex = (timestampTracker.slotIndex + 1) % timestampTracker.slots.length;
+            if (!slot.busy) {
+                slot.busy = true;
+                return slot;
+            }
+        }
+        return null;
+    }
+
+    let lastPerfSnapshot = createPerfSnapshot(caps.kind, { gpuTimingSupported: supportsTimestampQuery });
 
     function beginFrame() {
         const encoder = device.createCommandEncoder();
-        const frameStats = {
-            backend: caps.kind,
-            submits: 0,
-            computePasses: 0,
-            renderPasses: 0,
-            blits: 0,
-            composites: 0,
-        };
-        let computePass = null;
+        const frameStats = createPerfSnapshot(caps.kind, { gpuTimingSupported: supportsTimestampQuery });
+        const timingSlot = acquireTimingSlot();
+        let queryCount = 0;
+        const timingLabels = [];
 
-        function endComputePass() {
-            if (!computePass) return;
-            computePass.end();
-            computePass = null;
+        function allocTimestampWrites(label) {
+            if (!timingSlot || !label || queryCount + 2 > TIMESTAMP_QUERY_CAPACITY) return undefined;
+            const begin = queryCount++;
+            const end = queryCount++;
+            timingLabels.push({ label, begin, end });
+            return {
+                querySet: timestampTracker.querySet,
+                beginningOfPassWriteIndex: begin,
+                endOfPassWriteIndex: end,
+            };
         }
 
-        function getComputePass() {
-            if (!computePass) {
-                computePass = encoder.beginComputePass();
-                frameStats.computePasses += 1;
-            }
-            return computePass;
+        function beginComputePass(label) {
+            const descriptor = {};
+            const timestampWrites = allocTimestampWrites(label);
+            if (timestampWrites) descriptor.timestampWrites = timestampWrites;
+            frameStats.computePasses += 1;
+            return encoder.beginComputePass(descriptor);
+        }
+
+        function beginRenderPass(label, attachment) {
+            const descriptor = { colorAttachments: [attachment] };
+            const timestampWrites = allocTimestampWrites(label);
+            if (timestampWrites) descriptor.timestampWrites = timestampWrites;
+            frameStats.renderPasses += 1;
+            return encoder.beginRenderPass(descriptor);
+        }
+
+        function scheduleTimingReadback(submittedStats) {
+            if (!timingSlot || queryCount === 0) return;
+            const labelCopy = timingLabels.map((entry) => ({ ...entry }));
+            device.queue.onSubmittedWorkDone().then(async () => {
+                let mapped = false;
+                try {
+                    await timingSlot.readBuffer.mapAsync(GPUMapMode.READ, 0, queryCount * 8);
+                    mapped = true;
+                    const mappedCopy = timingSlot.readBuffer.getMappedRange(0, queryCount * 8).slice(0);
+                    timingSlot.readBuffer.unmap();
+                    mapped = false;
+                    const values = new BigUint64Array(mappedCopy);
+                    const timings = labelCopy.map((entry) => ({
+                        label: entry.label,
+                        ms: Math.max(0, Number(values[entry.end] - values[entry.begin])) / NANOS_PER_MILLISECOND,
+                    }));
+                    lastPerfSnapshot = applyLabeledGpuTimings(submittedStats, timings);
+                } catch {
+                    if (mapped) timingSlot.readBuffer.unmap();
+                    lastPerfSnapshot = submittedStats;
+                } finally {
+                    timingSlot.busy = false;
+                }
+            });
         }
 
         return {
@@ -456,63 +557,52 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                     initScratchU32[9] = activeRows;
                     device.queue.writeBuffer(initUBuf, 0, initScratch);
                     const group = getInitBindGroup(stateIn, stateOut, currentSpectrumHandle());
-                    const pass = getComputePass();
+                    const pass = beginComputePass("init");
                     pass.setPipeline(program.pipeline);
                     pass.setBindGroup(0, group);
                     pass.dispatchWorkgroups(Math.ceil(raySize / 8), Math.ceil(activeRows / 8));
+                    pass.end();
                     return;
                 }
-                /* trace */
+
                 traceScratchU32[0] = raySize;
                 traceScratchU32[1] = activeRows;
                 traceScratchU32[2] = 0;
                 traceScratchU32[3] = 0;
                 device.queue.writeBuffer(traceUBuf, 0, traceScratch);
                 const group = getTraceBindGroup(stateIn, stateOut);
-                const pass = getComputePass();
+                const pass = beginComputePass("trace");
                 pass.setPipeline(program.pipeline);
                 pass.setBindGroup(0, group);
                 pass.dispatchWorkgroups(Math.ceil(raySize / 8), Math.ceil(activeRows / 8));
+                pass.end();
             },
             splatRays({ program, waveBuffer, stateA, stateB, raysVbo, raysDrawCount, aspect, clearFirst }) {
-                endComputePass();
+                void raysVbo;
                 splatScratchF32[0] = aspect;
-                splatScratchU32[1] = stateA.size;
-                splatScratchU32[2] = 0;
-                splatScratchU32[3] = 0;
                 device.queue.writeBuffer(splatUBuf, 0, splatScratch);
                 const group = getSplatBindGroup(stateA, stateB);
-                frameStats.renderPasses += 1;
-                const pass = encoder.beginRenderPass({
-                    colorAttachments: [
-                        {
-                            view: waveBuffer.view,
-                            loadOp: clearFirst ? "clear" : "load",
-                            storeOp: "store",
-                            clearValue: { r: 0, g: 0, b: 0, a: 1 },
-                        },
-                    ],
+                const drawArgs = createProceduralSplatDrawArgs(raysDrawCount);
+                frameStats.traceSteps += 1;
+                const pass = beginRenderPass("splat", {
+                    view: waveBuffer.view,
+                    loadOp: clearFirst ? "clear" : "load",
+                    storeOp: "store",
+                    clearValue: { r: 0, g: 0, b: 0, a: 1 },
                 });
                 pass.setPipeline(program.pipeline);
                 pass.setBindGroup(0, group);
-                pass.setVertexBuffer(0, raysVbo.buffer);
-                pass.draw(raysDrawCount, 1);
+                pass.draw(drawArgs.vertexCount, drawArgs.instanceCount);
                 pass.end();
             },
             blit({ program, src, dst, additive }) {
-                endComputePass();
                 const group = getBlitBindGroup(src);
-                frameStats.renderPasses += 1;
                 frameStats.blits += 1;
-                const pass = encoder.beginRenderPass({
-                    colorAttachments: [
-                        {
-                            view: dst.view,
-                            loadOp: additive ? "load" : "clear",
-                            storeOp: "store",
-                            clearValue: { r: 0, g: 0, b: 0, a: 1 },
-                        },
-                    ],
+                const pass = beginRenderPass("blit", {
+                    view: dst.view,
+                    loadOp: additive ? "load" : "clear",
+                    storeOp: "store",
+                    clearValue: { r: 0, g: 0, b: 0, a: 1 },
                 });
                 pass.setPipeline(program.pipeline);
                 pass.setBindGroup(0, group);
@@ -520,48 +610,47 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                 pass.end();
             },
             clearTexture(target) {
-                endComputePass();
-                frameStats.renderPasses += 1;
-                const pass = encoder.beginRenderPass({
-                    colorAttachments: [
-                        {
-                            view: target.view,
-                            loadOp: "clear",
-                            storeOp: "store",
-                            clearValue: { r: 0, g: 0, b: 0, a: 1 },
-                        },
-                    ],
+                const pass = beginRenderPass(null, {
+                    view: target.view,
+                    loadOp: "clear",
+                    storeOp: "store",
+                    clearValue: { r: 0, g: 0, b: 0, a: 1 },
                 });
                 pass.end();
             },
             composite({ program, screenBuffer, exposure, previewBuffer }) {
-                endComputePass();
                 composeScratchF32[0] = exposure;
                 composeScratchF32[1] = previewBuffer ? 1.0 : 0.0;
                 device.queue.writeBuffer(composeUBuf, 0, composeScratch);
-                const group = getComposeBindGroup(screenBuffer, previewBuffer || screenBuffer);
-                frameStats.renderPasses += 1;
+                const activeProgram = previewBuffer ? programs.get("compositePreview") : program;
+                const group = previewBuffer
+                    ? getComposePreviewBindGroup(screenBuffer, previewBuffer)
+                    : getComposeBindGroup(screenBuffer);
                 frameStats.composites += 1;
-                const pass = encoder.beginRenderPass({
-                    colorAttachments: [
-                        {
-                            view: ctx.getCurrentTexture().createView(),
-                            loadOp: "clear",
-                            storeOp: "store",
-                            clearValue: { r: 0, g: 0, b: 0, a: 1 },
-                        },
-                    ],
+                const pass = beginRenderPass("composite", {
+                    view: ctx.getCurrentTexture().createView(),
+                    loadOp: "clear",
+                    storeOp: "store",
+                    clearValue: { r: 0, g: 0, b: 0, a: 1 },
                 });
-                pass.setPipeline(program.pipeline);
+                pass.setPipeline(activeProgram.pipeline);
                 pass.setBindGroup(0, group);
                 pass.draw(3);
                 pass.end();
             },
             submit() {
-                endComputePass();
                 frameStats.submits = 1;
-                lastPerfSnapshot = frameStats;
-                device.queue.submit([encoder.finish()]);
+
+                if (timingSlot && queryCount > 0) {
+                    encoder.resolveQuerySet(timestampTracker.querySet, 0, queryCount, timingSlot.resolveBuffer, 0);
+                    encoder.copyBufferToBuffer(timingSlot.resolveBuffer, 0, timingSlot.readBuffer, 0, queryCount * 8);
+                }
+
+                const commandBuffer = encoder.finish();
+                const submittedStats = { ...frameStats };
+                lastPerfSnapshot = submittedStats;
+                device.queue.submit([commandBuffer]);
+                scheduleTimingReadback(submittedStats);
             },
         };
     }

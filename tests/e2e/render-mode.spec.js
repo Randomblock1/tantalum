@@ -46,4 +46,13 @@ test("debug perf snapshot exposes per-frame batching counters", async ({ page })
     expect(snapshot.traceSteps).toBeGreaterThan(0);
     expect(snapshot.submits).toBeGreaterThan(0);
     expect(snapshot.renderPasses).toBeGreaterThan(0);
+    expect(snapshot).toMatchObject({
+        gpuTimingSupported: false,
+        gpuMsTotal: null,
+        gpuMsInit: null,
+        gpuMsTrace: null,
+        gpuMsSplat: null,
+        gpuMsBlit: null,
+        gpuMsComposite: null,
+    });
 });

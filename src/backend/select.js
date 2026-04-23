@@ -26,7 +26,9 @@ export async function selectBackend(canvas, opts = {}) {
         try {
             const adapter = await navigator.gpu.requestAdapter({ powerPreference: "high-performance" });
             if (adapter && REQUIRED_FEATURES.every((f) => adapter.features.has(f))) {
-                const device = await adapter.requestDevice({ requiredFeatures: REQUIRED_FEATURES });
+                const requiredFeatures = [...REQUIRED_FEATURES];
+                if (adapter.features.has("timestamp-query")) requiredFeatures.push("timestamp-query");
+                const device = await adapter.requestDevice({ requiredFeatures });
                 return await makeWebGPUBackend(canvas, device, adapter);
             }
         } catch (e) {

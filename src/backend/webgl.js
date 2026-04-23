@@ -36,6 +36,14 @@ export function makeWebGLBackend(canvas) {
     const caps = { kind: "webgl2", hasFloat32Blend: true, hasLinearFloat: true };
     let lastPerfSnapshot = {
         backend: caps.kind,
+        traceSteps: 0,
+        gpuTimingSupported: false,
+        gpuMsTotal: null,
+        gpuMsInit: null,
+        gpuMsTrace: null,
+        gpuMsSplat: null,
+        gpuMsBlit: null,
+        gpuMsComposite: null,
         submits: 0,
         computePasses: 0,
         renderPasses: 0,
@@ -165,6 +173,14 @@ export function makeWebGLBackend(canvas) {
     function beginFrame() {
         const frameStats = {
             backend: caps.kind,
+            traceSteps: 0,
+            gpuTimingSupported: false,
+            gpuMsTotal: null,
+            gpuMsInit: null,
+            gpuMsTrace: null,
+            gpuMsSplat: null,
+            gpuMsBlit: null,
+            gpuMsComposite: null,
             submits: 0,
             computePasses: 0,
             renderPasses: 0,
@@ -212,6 +228,7 @@ export function makeWebGLBackend(canvas) {
                 gl.disable(gl.SCISSOR_TEST);
             },
             splatRays({ program, waveBuffer, stateA, stateB, raysVbo, raysDrawCount, aspect, clearFirst }) {
+                frameStats.traceSteps += 1;
                 frameStats.renderPasses += 1;
                 fbo.bind();
                 fbo.drawBuffers(1);

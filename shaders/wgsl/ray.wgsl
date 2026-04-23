@@ -1,15 +1,14 @@
 #include "preamble"
 
 struct SplatUniforms {
-    aspect:  f32,
-    raySize: u32,
-    _pad0:   u32,
-    _pad1:   u32,
+    aspect: f32,
+    _pad:   vec3f,
 }
 
 @group(0) @binding(0) var<uniform> U: SplatUniforms;
-@group(0) @binding(1) var<storage, read> stateA: array<Ray>;
-@group(0) @binding(2) var<storage, read> stateB: array<Ray>;
+@group(0) @binding(1) var<storage, read> posDirA:    array<vec4f>;
+@group(0) @binding(2) var<storage, read> rgbLambdaA: array<vec4f>;
+@group(0) @binding(3) var<storage, read> posDirB:    array<vec4f>;
 
 fn isRayAlive(rgbLambda: vec4f) -> bool {
     return any(rgbLambda.rgb != vec3f(0.0));
@@ -21,18 +20,18 @@ struct VSOut {
 }
 
 @vertex
-fn vs(@location(0) uvz: vec3f) -> VSOut {
-    let ix = u32(uvz.y * f32(U.raySize)) * U.raySize + u32(uvz.x * f32(U.raySize));
-    let rgbLambda = stateA[ix].rgbLambda;
-    let posA = stateA[ix].posDir.xy;
+fn vs(@builtin(vertex_index) vertexIndex: u32, @builtin(instance_index) instanceIndex: u32) -> VSOut {
+    let ix = instanceIndex;
+    let rgbLambda = rgbLambdaA[ix];
+    let posA = posDirA[ix].xy;
     var out: VSOut;
     if (!isRayAlive(rgbLambda)) {
         out.pos = vec4f(2.0, 2.0, 0.0, 1.0);
         out.color = vec3f(0.0);
         return out;
     }
-    let posB = stateB[ix].posDir.xy;
-    let pos  = mix(posA, posB, uvz.z);
+    let posB = posDirB[ix].xy;
+    let pos  = select(posA, posB, vertexIndex == 1u);
     let dir  = posB - posA;
     let bias = clamp(length(dir) / max(max(abs(dir.x), abs(dir.y)), 1e-30), 1.0, SQRT2);
     out.pos   = vec4f(pos.x / U.aspect, pos.y, 0.0, 1.0);
