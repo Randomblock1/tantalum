@@ -232,7 +232,10 @@
             if (this.screenBuffer && typeof this.screenBuffer.destroy == "function") this.screenBuffer.destroy();
             if (this.waveBuffer && typeof this.waveBuffer.destroy == "function") this.waveBuffer.destroy();
             this.screenBuffer = this.backend.createRenderTexture(this.width, this.height);
-            this.waveBuffer = this.backend.createRenderTexture(this.width, this.height);
+            // waveBuffer only accumulates a single wave (12 additive splats) before
+            // being blitted into the rgba32float screenBuffer and cleared, so fp16
+            // range/precision is sufficient and halves splat blend/fill bandwidth.
+            this.waveBuffer = this.backend.createRenderTexture(this.width, this.height, { format: "rgba16float" });
         }
 
         this.resetActiveBlock();

@@ -84,7 +84,10 @@ export function makeWebGLBackend(canvas) {
         };
     }
 
-    function createRenderTexture(w, h) {
+    function createRenderTexture(w, h, opts) {
+        // The WebGPU backend can render waveBuffer at rgba16float for bandwidth;
+        // WebGL2 keeps a single full-float render path and ignores the hint.
+        void opts;
         return { width: w, height: h, tex: createTexture(w, h, 4, true, false, null) };
     }
 

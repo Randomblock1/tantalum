@@ -186,25 +186,41 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
             { binding: 3, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
         ],
     });
-    const rayPipeline = device.createRenderPipeline({
-        layout: device.createPipelineLayout({ bindGroupLayouts: [rayLayout] }),
-        vertex: { module: rayModule, entryPoint: "vs" },
-        fragment: {
-            module: rayModule,
-            entryPoint: "fs",
-            targets: [
-                {
-                    format: "rgba32float",
-                    blend: {
-                        color: { operation: "add", srcFactor: "one", dstFactor: "one" },
-                        alpha: { operation: "add", srcFactor: "one", dstFactor: "one" },
+    // The splat pass renders into two different targets depending on the code
+    // path: waveBuffer (rgba16float, one-wave accumulator) via splatRays, and
+    // screenBuffer (rgba32float) directly via splatRaysToAccumulation. Render
+    // pipelines are bound to a target format, so we build one variant per format
+    // and select per-call by the destination texture's format.
+    function makeSplatPipeline(targetFormat) {
+        return device.createRenderPipeline({
+            layout: device.createPipelineLayout({ bindGroupLayouts: [rayLayout] }),
+            vertex: { module: rayModule, entryPoint: "vs" },
+            fragment: {
+                module: rayModule,
+                entryPoint: "fs",
+                targets: [
+                    {
+                        format: targetFormat,
+                        blend: {
+                            color: { operation: "add", srcFactor: "one", dstFactor: "one" },
+                            alpha: { operation: "add", srcFactor: "one", dstFactor: "one" },
+                        },
                     },
-                },
-            ],
-        },
-        primitive: { topology: "line-list" },
+                ],
+            },
+            primitive: { topology: "line-list" },
+        });
+    }
+    const splatPipelines = {
+        rgba32float: makeSplatPipeline("rgba32float"),
+        rgba16float: makeSplatPipeline("rgba16float"),
+    };
+    programs.set("splat", {
+        kind: "splat",
+        pipeline: splatPipelines.rgba32float,
+        pipelinesByFormat: splatPipelines,
+        layout: rayLayout,
     });
-    programs.set("splat", { kind: "splat", pipeline: rayPipeline, layout: rayLayout });
 
     const passModule = loadShaderModule("pass");
     const passLayout = device.createBindGroupLayout({
@@ -399,10 +415,11 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
         };
     }
 
-    function createRenderTexture(w, h) {
+    function createRenderTexture(w, h, opts) {
+        const format = opts && opts.format ? opts.format : "rgba32float";
         const texture = device.createTexture({
             size: { width: w, height: h },
-            format: "rgba32float",
+            format,
             usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_DST,
         });
         return createManagedTextureHandle({
@@ -410,7 +427,18 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
             view: texture.createView(),
             width: w,
             height: h,
+            format,
         });
+    }
+
+    // Splat pipelines are bound to their color-target format; pick the variant
+    // matching the destination texture (waveBuffer=rgba16float, screen=rgba32float).
+    function selectSplatPipeline(program, target) {
+        const byFormat = program.pipelinesByFormat;
+        if (byFormat && target && target.format && byFormat[target.format]) {
+            return byFormat[target.format];
+        }
+        return program.pipeline;
     }
 
     function createQuadGeometry() {
@@ -663,7 +691,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                     storeOp: "store",
                     clearValue: { r: 0, g: 0, b: 0, a: 1 },
                 });
-                pass.setPipeline(program.pipeline);
+                pass.setPipeline(selectSplatPipeline(program, waveBuffer));
                 pass.setBindGroup(0, group, [uniform.offset]);
                 frameStats.drawCalls += 1;
                 pass.draw(drawArgs.vertexCount, drawArgs.instanceCount);
@@ -683,7 +711,7 @@ export async function makeWebGPUBackend(canvas, device, adapter) {
                     storeOp: "store",
                     clearValue: { r: 0, g: 0, b: 0, a: 1 },
                 });
-                pass.setPipeline(program.pipeline);
+                pass.setPipeline(selectSplatPipeline(program, screenBuffer));
                 pass.setBindGroup(0, group, [uniform.offset]);
                 frameStats.drawCalls += 1;
                 pass.draw(drawArgs.vertexCount, drawArgs.instanceCount);

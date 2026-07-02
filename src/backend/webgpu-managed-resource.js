@@ -1,4 +1,4 @@
-export function createManagedTextureHandle({ texture, view, width, height, channels }) {
+export function createManagedTextureHandle({ texture, view, width, height, channels, format }) {
     let destroyed = false;
     return {
         texture,
@@ -6,6 +6,7 @@ export function createManagedTextureHandle({ texture, view, width, height, chann
         width,
         height,
         channels,
+        format,
         destroy() {
             if (destroyed) return false;
             destroyed = true;

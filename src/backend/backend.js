@@ -30,7 +30,7 @@
 
 /**
  * @typedef {Object} SplatRaysArgs
- * @property {RenderTexture} waveBuffer  - rgba32float target.
+ * @property {RenderTexture} waveBuffer  - Single-wave accumulator (rgba16float on WebGPU, rgba32float on WebGL).
  * @property {RenderTexture} [screenBuffer] - Optional rgba32float accumulation target for WebGPU direct commits.
  * @property {RayState} stateA
  * @property {RayState} stateB
@@ -69,7 +69,7 @@
  * @property {BackendCaps} caps
  * @property {HTMLCanvasElement} canvas
  * @property {(size: number) => RayState} createRayState
- * @property {(w: number, h: number, opts?: {format?: "rgba32float"}) => RenderTexture} createRenderTexture
+ * @property {(w: number, h: number, opts?: {format?: "rgba32float" | "rgba16float"}) => RenderTexture} createRenderTexture
  * @property {() => Vbo} createQuadGeometry
  * @property {(raySize: number) => Vbo} createRayLineGeometry
  * @property {(kind: "init"|"trace"|"splat"|"blit"|"composite", name: string) => Program} loadProgram
