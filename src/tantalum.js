@@ -151,6 +151,21 @@ Tantalum.prototype.installDebugApi = function () {
             pendingPresent: self.renderer ? self.renderer.unpresentedTraceSteps : 0,
         });
     };
+    debugApi.getBenchStats = function () {
+        var r = self.renderer;
+        if (!r) return null;
+        return {
+            raysTraced: r.totalRaysTraced(),
+            samplesTraced: r.totalSamplesTraced(),
+            wavesTraced: r.wavesTraced,
+            finished: r.finished(),
+            raySize: r.raySize,
+            maxPathLength: r.maxPathLength,
+        };
+    };
+    debugApi.setMaxSampleCount = function (count) {
+        if (self.renderer) self.renderer.setMaxSampleCount(count);
+    };
     window.__tantalumDebug = debugApi;
 };
 

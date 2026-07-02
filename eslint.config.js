@@ -67,7 +67,7 @@ export default [
         },
     },
     {
-        files: ["tests/**/*.js"],
+        files: ["tests/**/*.js", "tools/**/*.mjs"],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: "module",
