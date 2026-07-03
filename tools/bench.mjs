@@ -108,11 +108,19 @@ try {
     log("adapter:", JSON.stringify(adapterInfo));
 
     if (scene > 0) {
-        await page.evaluate((sceneIx) => {
-            const group = document.getElementById("scene-selector");
-            const buttons = group ? group.querySelectorAll("button") : [];
-            if (buttons[sceneIx]) buttons[sceneIx].click();
+        const clicked = await page.evaluate((sceneIx) => {
+            /* tui.ButtonGroup replaces #scene-selector with #scene-selector-group
+               (a <ul> since the scene group is vertical) and renders each option
+               as a <li class="button-vert">, not a <button>. */
+            const group = document.getElementById("scene-selector-group");
+            const buttons = group ? group.children : [];
+            if (buttons[sceneIx]) {
+                buttons[sceneIx].click();
+                return true;
+            }
+            return false;
         }, scene);
+        if (!clicked) throw new Error(`--scene ${scene}: scene button not found`);
     }
 
     await page.evaluate(() => window.__tantalumDebug.setMaxSampleCount(1e12));
