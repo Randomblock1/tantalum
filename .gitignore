@@ -5,3 +5,5 @@ dist/
 test-results/
 playwright-report/
 .codex
+bun.lock
+bun.lockb
